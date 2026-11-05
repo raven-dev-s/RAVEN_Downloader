@@ -2,8 +2,10 @@
 
 **Professional video downloader for Ubuntu Touch** — Powered by yt-dlp with native QML interface and Python backend.
 
+Runs on **Ubuntu Touch 20.04 and 24.04** (arm64, armhf, and amd64). OpenStore gives each device the right package.
+
 [![OpenStore](https://open-store.io/badges/en_US.png)](https://open-store.io/app/raven.downloader.shohag)
-[![Build and publish to OpenStore](https://github.com/raven-dev-ltd/RAVEN_Downloader/actions/workflows/openstore-monthly.yml/badge.svg)](https://github.com/raven-dev-ltd/RAVEN_Downloader/actions/workflows/openstore-monthly.yml) [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-2.0.0-green.svg)](manifest.json.in)
+[![Build and publish to OpenStore](https://github.com/raven-dev-s/RAVEN_Downloader/actions/workflows/openstore-monthly.yml/badge.svg)](https://github.com/raven-dev-s/RAVEN_Downloader/actions/workflows/openstore-monthly.yml) [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE) [![Version](https://img.shields.io/badge/version-4.3.0-green.svg)](manifest.json.in)
 
 ---
 
@@ -12,9 +14,10 @@
 ### Core Capabilities
 - **12 Platform Support** — YouTube, Vimeo, Dailymotion, Twitch, Facebook, Instagram, Twitter/X, TikTok, SoundCloud, Reddit, Bilibili with intelligent URL validation
 - **Granular Format Control** — Independent video resolution and audio bitrate selection
+- **Audio-Only Downloads** — Choose "Audio only" for any video, or make it the default in Settings
 - **Smart Playlist Handling** — Batch downloads with per-video format customization (platform-dependent)
 - **Pull-to-Refresh History** — Swipe down on download history to reload entries from storage
-- **One-Tap History Clear** — Clear all download history with automatic UI refresh via signal-based architecture
+- **History Control** — Delete single entries, or clear everything after a confirmation
 - **Native ContentHub** — Seamless file export to any Ubuntu Touch app
 - **Subtitle Engine** — Download, auto-caption, and embed subtitles in multiple languages
 - **Entry-Based Storage** — Persistent history with dedicated directories and thumbnail caching
@@ -59,29 +62,41 @@ clickable desktop --no-nvidia
 ### Usage Examples
 
 **Single Video Download**
-1. Paste URL (e.g., `https://youtube.com/watch?v=VIDEO_ID`)
-2. Submit → Select video quality and audio bitrate
-3. Download → Export via ContentHub
+1. Paste the link (e.g., `https://youtube.com/watch?v=VIDEO_ID`) into the bar at the top
+2. Fetch → Choose video and audio quality (the best ones are preselected), or "Audio only" in the video list
+3. Download → Save to an app via ContentHub, right away or later from the list
 
 **Playlist Download** (YouTube, Vimeo, Dailymotion, etc.)
-1. Set type to "Playlist"
-2. Paste playlist URL (e.g., `https://youtube.com/playlist?list=PLAYLIST_ID`)
-3. Submit → Select formats for each video
-4. Batch download with individual format control
+1. Choose "Playlist" in the bar at the top
+2. Paste the playlist link (e.g., `https://youtube.com/playlist?list=PLAYLIST_ID`)
+3. Fetch → Watch the videos being added, and stop at any point
+4. Choose formats and download each video individually
 
-**Advanced Settings** (Bottom-edge swipe)
+**Settings** (gear icon in the header)
 - Enable subtitle downloads (embedded or separate)
 - Toggle auto-captions
-- Switch themes (Ambiance/Suru Dark)
-- Clear download history (automatic UI refresh)
+- Follow the system theme, or choose Light or Dark
+- Clear download history (asks for confirmation)
 
 **History Management**
 - Pull down on the download list to refresh from storage
-- Swipe up from bottom edge → Settings → Clear All History (one-tap with automatic reload)
+- Swipe a list item to delete it together with its downloaded file
+- Settings → Clear all history removes the whole list and unsaved downloaded files
 
 ---
 
 ## Recent Updates
+
+### Version 4.3.0 — November 2026
+
+- **Ubuntu Touch 20.04 is back** — Packages are built for both 20.04 and 24.04, each with the latest yt-dlp
+- **Redesigned interface** — Link entry docked into the header across the full width, native list rows in Settings, and a real About page
+- **Clearer downloads** — The best quality is preselected, each item shows its status, and finished files stay available to save later
+- **Audio-only downloads** — Save just the audio of any video, per video or by default
+- **More control** — Delete single entries, stop adding a playlist, and choose between a whole playlist and one of its videos
+- **Settings apply immediately** — Theme and download settings no longer need an app restart
+- **Bug fixes** — Auto download no longer restarts every history entry when the app opens, and saved format choices and progress survive a restart
+- **Rebranded** — Developed by RAVEN Devs; support at support@raven-dev.tech
 
 ### Version 2.0.0 — December 2025
 
@@ -119,6 +134,7 @@ clickable desktop --no-nvidia
 ├─────────────────────────────────────┤
 │  Python Backend (Type-Annotated)    │
 │  ├─ download_manager.py             │  ← yt-dlp orchestration, threading
+│  ├─ ytdlp_bridge.py / ytdlp_worker.py │  ← yt-dlp on a bundled Python (20.04)
 │  ├─ format_parser.py                │  ← Metadata extraction, formatting
 │  ├─ url_validator.py                │  ← 12-platform URL validation
 │  └─ storage_manager.py              │  ← Entry-based persistence, caching
@@ -131,22 +147,22 @@ clickable desktop --no-nvidia
 ### Component Hierarchy
 ```
 qml/
-├── MainPage.qml              (496 lines) — Main UI, URL submission, pull-to-refresh
+├── MainPage.qml              — Main UI, download list, pull-to-refresh
 ├── SettingsPage.qml          — Configuration, theme selection, history clearing
-├── ExportPage.qml            — ContentHub file export
-├── AboutPage.qml             (140 lines) — Credits, optimized with components
+├── AboutPage.qml             — Version, support, project links
 └── Components/
+    ├── UrlBar.qml            — Link entry docked in the page header
     ├── DownloadItemManager.qml — History management with reload support
-    ├── MediaItem.qml         (298 lines) — Download list item, optimized
+    ├── MediaItem.qml         — Download list item
     ├── ThumbnailImage.qml    — Smart thumbnail loader with caching
     ├── DownloadButton.qml    — Download orchestration with polling
+    ├── CustomComboPopup.qml  — Format picker
     ├── MainPageDialogs.qml   — Error/warning dialog collection
-    ├── CustomLabel.qml       — Reusable link labels
-    ├── SectionLabel.qml      — Consistent section headers
-    ├── ContentHubDialog.qml  — File export dialog
-    ├── LoadingOverlay.qml    — Busy indicator overlay
-    ├── CustomBottomEdge.qml  — Settings drawer
-    └── Custom*.qml           — UI widgets (ComboPopup, ProgressBar, etc.)
+    ├── EmptyState.qml        — Placeholder for empty lists
+    ├── LinkRow.qml           — List row opening an external link
+    ├── SectionLabel.qml      — Heading above list rows
+    ├── SettingsCheckbox.qml  — Settings row with a switch
+    └── ContentHubDialog.qml  — File export page
 ```
 
 ---
@@ -193,6 +209,9 @@ clickable clean && clickable build
 clickable build --arch arm64    # For ARM devices
 clickable build --arch amd64    # For x86_64
 
+# Build for Ubuntu Touch 20.04 (the default is 24.04)
+CLICKABLE_FRAMEWORK=ubuntu-sdk-20.04 clickable build --arch arm64
+
 # Desktop testing (requires yt-dlp installed locally)
 clickable desktop --no-nvidia
 
@@ -204,22 +223,28 @@ clickable install
 ```
 
 ### Embedded Dependencies
-Dependencies are bundled during build process:
-- **yt-dlp** → `lib/python3/dist-packages/` (Python package)
+Dependencies are bundled by `scripts/embed-dependencies.sh` during the build:
 - **ffmpeg** → `lib/<target-triplet>/bin/ffmpeg` (binary for media processing)
+- **yt-dlp** → the latest release, in a location that depends on the target's system Python:
 
-To update yt-dlp:
-```bash
-# Update lib/python3/dist-packages/ with latest yt-dlp
-pip install --target lib/python3/dist-packages yt-dlp --upgrade
-```
+| Target | System Python | yt-dlp location | How it runs |
+|--------|---------------|-----------------|-------------|
+| Ubuntu Touch 24.04 | 3.12 | `lib/python3/dist-packages/` | Inside the app, through PyOtherSide |
+| Ubuntu Touch 20.04 | 3.8 | `lib/<target-triplet>/ytdlp-runtime/` | On a bundled Python, as a child process (`src/ytdlp_bridge.py`) |
+
+yt-dlp requires Python 3.11 or newer, and its last release for Python 3.8 dates from October 2024. PyOtherSide ties the app itself to the system Python, so 20.04 packages bundle a standalone Python for yt-dlp. They are about 25 MB larger as a result. Any target whose system Python falls behind yt-dlp's requirement switches to this approach automatically.
 
 ### Automated OpenStore Releases
 
-GitHub Actions builds arm64, amd64, and armhf packages and publishes them to
-OpenStore on the first day of every month at 04:23 UTC. The build installs the
-latest stable `yt-dlp` release at build time and records the embedded version in
-the workflow artifact.
+GitHub Actions builds arm64, amd64, and armhf packages for both Ubuntu Touch
+20.04 and 24.04, and publishes them to OpenStore on the first day of every month
+at 04:23 UTC. The build installs the latest stable `yt-dlp` release at build time.
+
+Pushes to `main` publish too, unless they change only Markdown files or the
+license. Package versions have the form `<base>.<series>[.<timestamp>]`, such as
+`4.3.0.2404.20261201042300`, because OpenStore keeps both series in one channel and
+rejects one version number for two frameworks. Keep `PROJECT_VERSION` in
+`CMakeLists.txt` as the base, and only ever raise it.
 
 Before enabling the workflow, add the OpenStore API key as the
 `OPENSTORE_API_KEY` GitHub Actions secret (repository-level or in the
@@ -258,12 +283,13 @@ raven.downloader/
 ├── qml/                    # QML UI files
 │   ├── MainPage.qml
 │   ├── SettingsPage.qml
-│   ├── ExportPage.qml
 │   ├── AboutPage.qml
 │   └── Components/        # Reusable components
 ├── src/                    # Python backend
 │   ├── __init__.py
 │   ├── download_manager.py
+│   ├── ytdlp_bridge.py
+│   ├── ytdlp_worker.py
 │   ├── format_parser.py
 │   ├── url_validator.py
 │   └── storage_manager.py
@@ -307,7 +333,7 @@ clickable desktop --no-nvidia 2>&1 | tee app.log
 | Error | Solution |
 |-------|----------|
 | **yt-dlp not found** | `clickable clean && clickable build` |
-| **Module import error** | Verify `lib/python3/dist-packages` contains yt-dlp |
+| **Module import error** | Verify `lib/python3/dist-packages` (24.04) or `lib/<target-triplet>/ytdlp-runtime/site-packages` (20.04) contains yt-dlp |
 | **ffmpeg missing** | Check `lib/aarch64-linux-gnu/bin/ffmpeg` (or the matching target triplet) exists |
 | **CMake warnings** | Safe to ignore deprecation warnings (compatibility) |
 
@@ -381,7 +407,7 @@ We welcome contributions! Follow these steps:
 
 **GNU General Public License v3.0**
 
-Copyright (C) 2025 RAVEN Developers Ltd.
+Copyright (C) 2025 RAVEN Devs
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3.
 
@@ -392,13 +418,13 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 ## Links & Resources
 
 ### Project
-- **Repository**: [github.com/raven-dev-ltd/RAVEN_Downloader](https://github.com/raven-dev-ltd/RAVEN_Downloader)
+- **Repository**: [github.com/raven-dev-s/RAVEN_Downloader](https://github.com/raven-dev-s/RAVEN_Downloader)
 - **OpenStore**: [open-store.io/app/raven.downloader.shohag](https://open-store.io/app/raven.downloader.shohag)
-- **Issues**: [github.com/raven-dev-ltd/RAVEN_Downloader/issues](https://github.com/raven-dev-ltd/RAVEN_Downloader/issues)
+- **Issues**: [github.com/raven-dev-s/RAVEN_Downloader/issues](https://github.com/raven-dev-s/RAVEN_Downloader/issues)
 
 ### Contact
-- **Developer**: RAVEN Developers Ltd.
-- **Email**: [HackerShohag@outlook.com](mailto:HackerShohag@outlook.com)
+- **Developer**: RAVEN Devs
+- **Email**: [support@raven-dev.tech](mailto:support@raven-dev.tech)
 - **Platform**: Ubuntu Touch (Lomiri)
 
 ### Technologies

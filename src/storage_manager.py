@@ -1,5 +1,5 @@
 '''
- Copyright (C) 2025  RAVEN Developers Ltd.
+ Copyright (C) 2025  RAVEN Devs
 
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -121,8 +121,9 @@ class StorageManager:
         """
         Delete all download history from entry-based storage.
         
-        Removes all entry directories and clears the index file. This is
-        a destructive operation that cannot be undone.
+        Removes all entry directories, clears the index file, and deletes the
+        downloaded files still in the app cache, which nothing can reach
+        without their history entries. This cannot be undone.
         
         Returns:
             True if successful, False on error
@@ -137,9 +138,42 @@ class StorageManager:
                 shutil.rmtree(self.entries_dir)
                 os.makedirs(self.entries_dir, exist_ok=True)
             
+            shutil.rmtree(self.get_download_path(), ignore_errors=True)
+            
             return True
         except Exception as e:
             print(f"[StorageManager] Error clearing history: {e}")
+            return False
+    
+    def delete_entry(self, entry_id):
+        """
+        Delete one history entry and its downloaded file.
+        
+        Args:
+            entry_id: Entry identifier to delete
+            
+        Returns:
+            True if successful, False on error
+        """
+        try:
+            import shutil
+            
+            entry = self.load_entry(entry_id) or {}
+            file_path = entry.get('vFilePath')
+            # Only ever remove files from this app's own download directory.
+            if file_path and os.path.dirname(file_path) == self.get_download_path():
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            
+            shutil.rmtree(os.path.join(self.entries_dir, entry_id), ignore_errors=True)
+            
+            index = [e for e in self.load_index() if e.get('entryId') != entry_id]
+            with open(self.index_file, 'w', encoding='utf-8') as f:
+                json.dump(index, f, indent=2, ensure_ascii=False)
+            
+            return True
+        except Exception as e:
+            print(f"[StorageManager] Error deleting entry {entry_id}: {e}")
             return False
     
     def save_settings(self, settings):
@@ -253,7 +287,11 @@ class StorageManager:
             if os.path.exists(thumbnail_path):
                 return thumbnail_path
             
-            urllib.request.urlretrieve(thumbnail_url, thumbnail_path)
+            # A thumbnail must never hold up a fetch on a poor connection.
+            with urllib.request.urlopen(thumbnail_url, timeout=15) as response:
+                data = response.read()
+            with open(thumbnail_path, 'wb') as f:
+                f.write(data)
             return thumbnail_path
             
         except Exception as e:
@@ -486,7 +524,7 @@ def save_list_model_data(data):
                             'vCodec', 'vResolutions', 'vVideoExts', 'vVideoFormats', 'vVideoProgress',
                             'aCodec', 'vAudioExts', 'vAudioFormats', 'vABR', 'vAudioSizes',
                             'vVideoIndex', 'vAudioIndex', 'selectedVideoCodec', 'selectedAudioCodec',
-                            'vSizeModel', 'vIndex', 'timestamp'
+                            'vSizeModel', 'vIndex', 'vFilePath', 'timestamp'
                         ]
                         
                         for key in expected_keys:
@@ -576,6 +614,10 @@ def load_list_model_data():
             item['vVideoProgress'] = 1.0
         if 'vIndex' not in item:
             item['vIndex'] = item.get('indexID', 0)
+        
+        # The app cache can be emptied at any time, so a file may be gone.
+        if not item.get('vFilePath') or not os.path.exists(item['vFilePath']):
+            item['vFilePath'] = ''
             
         for field in ['vCodec', 'vResolutions', 'vVideoExts', 'vVideoFormats', 
                       'aCodec', 'vAudioExts', 'vAudioFormats', 'vABR', 'vAudioSizes', 'vSizeModel']:
@@ -620,16 +662,28 @@ def save_single_entry(entry_data):
     return storage.save_single_entry(entry_data)
 
 
-def clear_download_history(pyotherside_instance=None):
+def delete_entry(entry_id):
+    """
+    Delete one history entry and its downloaded file.
+    
+    QML-accessible wrapper for StorageManager.delete_entry().
+    
+    Args:
+        entry_id: Entry identifier to delete
+        
+    Returns:
+        True if successful, False on error
+    """
+    return get_storage_manager().delete_entry(entry_id)
+
+
+def clear_download_history():
     """
     Clear all download history from storage.
     
     QML-accessible wrapper for clearing download history.
     Deletes all entry directories and clears the index file.
     Emits 'historyCleared' signal to QML for automatic reload.
-    
-    Args:
-        pyotherside_instance: PyOtherSide instance to emit signals (optional)
     
     Returns:
         True if successful, False on error

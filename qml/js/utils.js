@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025  RAVEN Developers Ltd.
+ * Copyright (C) 2025  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -95,4 +95,39 @@ function createContentItems(component, filePaths) {
         items.push(createContentItem(component, filePaths[i]));
     }
     return items;
+}
+
+
+function shortResolution(resolution) {
+    var match = /^\d+x(\d+)$/.exec(resolution || "");
+    return match ? match[1] + "p" : (resolution || "");
+}
+
+function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return "";
+    var units = ["B", "KB", "MB", "GB"];
+    var size = bytes;
+    var unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        unit++;
+    }
+    return (unit >= 2 ? size.toFixed(1) : Math.round(size)) + " " + units[unit];
+}
+
+// yt-dlp errors carry terminal colors and a technical prefix.
+function friendlyError(message) {
+    return String(message || "")
+        .replace(/\x1b\[[0-9;]*m/g, "")
+        .replace(/^\s*ERROR:\s*/i, "")
+        .replace(/^\[[^\]]+\]\s*[^:\s]+:\s*/, "");
+}
+
+// Reduces a "video inside a playlist" link to the video itself.
+function stripPlaylistParams(url) {
+    return String(url || "")
+        .replace(/([?&])(list|index|start_radio|pp)=[^&#]*/g, "$1")
+        .replace(/&{2,}/g, "&")
+        .replace(/\?&/, "?")
+        .replace(/[?&]+(#|$)/, "$1");
 }

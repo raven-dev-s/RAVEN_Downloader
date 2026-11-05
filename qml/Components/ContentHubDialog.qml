@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025  RAVEN Developers Ltd.
+ * Copyright (C) 2025  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,7 @@ Page {
     
     header: PageHeader {
         id: shareHeader
-        title: i18n.tr("Share Downloaded File")
+        title: i18n.tr("Save to…")
         
         leadingActionBar.actions: [
             Action {

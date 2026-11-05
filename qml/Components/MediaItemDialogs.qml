@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025  RAVEN Developers Ltd.
+ * Copyright (C) 2025  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,27 +18,14 @@ import QtQuick 2.7
 import Lomiri.Components 1.3
 import Lomiri.Components.Popups 1.3
 
+import "../js/utils.js" as Utils
+
 /**
  * MediaItemDialogs - Reusable dialog components for MediaItem
  * Provides download-related dialogs to avoid duplication
  */
 QtObject {
     id: dialogRoot
-    
-    /**
-     * Dialog shown when download link is expired or invalid
-     */
-    readonly property Component invalidDownloadWarning: Component {
-        Dialog {
-            id: dialogue
-            title: i18n.tr("Download Invalid!")
-            text: i18n.tr("Please refresh download link.")
-            Button {
-                text: "OK"
-                onClicked: PopupUtils.close(dialogue)
-            }
-        }
-    }
     
     /**
      * Dialog shown when download completes successfully
@@ -49,11 +36,11 @@ QtObject {
             id: finishedDialog
             property string fileName: ""
             property string filePath: ""
-            title: i18n.tr("Download Complete!")
-            text: i18n.tr("File downloaded: ") + fileName
+            title: i18n.tr("Download complete")
+            text: i18n.tr("Save \"%1\" to an app to keep it. You can also do this later from the list.").arg(fileName)
             
             Button {
-                text: i18n.tr("Save to...")
+                text: i18n.tr("Save to…")
                 color: theme.palette.normal.positive
                 onClicked: {
                     PopupUtils.close(finishedDialog);
@@ -64,7 +51,7 @@ QtObject {
             }
             
             Button {
-                text: i18n.tr("Close")
+                text: i18n.tr("Later")
                 onClicked: PopupUtils.close(finishedDialog)
             }
         }
@@ -78,10 +65,10 @@ QtObject {
         Dialog {
             id: errorDialog
             property string errorMessage: ""
-            title: i18n.tr("Download Failed")
-            text: errorMessage || i18n.tr("An error occurred while starting the download.")
+            title: i18n.tr("Download failed")
+            text: Utils.friendlyError(errorMessage) || i18n.tr("An error occurred while starting the download.")
             Button {
-                text: "OK"
+                text: i18n.tr("OK")
                 onClicked: PopupUtils.close(errorDialog)
             }
         }

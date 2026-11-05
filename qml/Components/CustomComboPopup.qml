@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022  RAVEN Developers Ltd.
+ * Copyright (C) 2022  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,58 +13,90 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 import QtQuick 2.7
-import QtQuick.Controls 2.2
 import Lomiri.Components 1.3
 import Lomiri.Components.Popups 1.3
 
+/**
+ * A button showing the current choice, opening a list of all choices.
+ */
 Button {
     id: dropdown
 
-    property var    dropdownModel   : null
-    property var    dropdownModel2  : null
-    property var    dropdownModel3  : null
-    property bool   multipleModel   : false
+    // Short text per choice, shown on the button and in the list.
+    property var    labels     : []
+    // Optional second line per choice in the list.
+    property var    details    : []
     property string heading
-    property int    index
-    property bool   defaultValue    : false
+    property int    index      : 0
+
+    // Emitted only when the user makes a choice, not when index is restored.
+    signal activated(int choice)
 
     color: theme.palette.normal.foreground
-    text: defaultValue ? dropdownModel[0] : heading
+    text: (labels && index >= 0 && index < labels.length) ? labels[index] : heading
     onClicked: PopupUtils.open(comboSelectorDialog)
 
     Component {
         id: comboSelectorDialog
+
         Dialog {
             id: dialogue
-            title: heading
-            Keys.onPressed: PopupUtils.close(dialogue)
-            
+            title: dropdown.heading
+            Keys.onEscapePressed: PopupUtils.close(dialogue)
+
             Flickable {
                 width: parent.width
                 height: Math.min(contentHeight, units.gu(40))
                 contentHeight: column.height
                 clip: true
-                
+
                 Column {
                     id: column
                     width: parent.width
-                    spacing: units.gu(0.5)
-                    
+
                     Repeater {
-                        model: dropdownModel
-                        delegate: Button {
+                        model: dropdown.labels
+
+                        delegate: ListItem {
                             width: parent.width
-                            text: multipleModel ? modelData + " (" + dropdownModel2[index] + " - " + dropdownModel3[index] + ")" : modelData
+                            height: choiceLayout.height + divider.height
+                            divider.colorFrom: theme.palette.normal.base
+                            divider.colorTo: theme.palette.normal.base
+                            color: "transparent"
                             onClicked: {
-                                dropdown.text = modelData;
-                                dropdown.index = index
-                                PopupUtils.close(dialogue)
+                                dropdown.index = model.index;
+                                dropdown.activated(model.index);
+                                PopupUtils.close(dialogue);
+                            }
+
+                            ListItemLayout {
+                                id: choiceLayout
+                                padding {
+                                    leading: units.gu(1)
+                                    trailing: units.gu(1)
+                                }
+                                title.text: modelData
+                                title.font.weight: model.index === dropdown.index ? Font.Medium : Font.Normal
+                                subtitle.text: (dropdown.details && dropdown.details[model.index]) || ""
+
+                                Icon {
+                                    SlotsLayout.position: SlotsLayout.Trailing
+                                    width: units.gu(2.5)
+                                    height: width
+                                    name: "tick"
+                                    color: theme.palette.normal.positive
+                                    opacity: model.index === dropdown.index ? 1 : 0
+                                }
                             }
                         }
                     }
                 }
+            }
+
+            Button {
+                text: i18n.tr("Cancel")
+                onClicked: PopupUtils.close(dialogue)
             }
         }
     }

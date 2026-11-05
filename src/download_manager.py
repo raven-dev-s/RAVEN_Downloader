@@ -1,5 +1,5 @@
 '''
- Copyright (C) 2025  RAVEN Developers Ltd.
+ Copyright (C) 2025  RAVEN Devs
 
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -54,24 +54,32 @@ else:
     print("[download_manager] WARNING: embedded ffmpeg binary not found")
 
 try:
-    import yt_dlp
-except ImportError as e:
-    print(f"[download_manager] WARNING: yt-dlp not installed: {e}")
-    yt_dlp = None
-except Exception as e:
-    print(f"[download_manager] ERROR importing yt-dlp: {e}")
-    yt_dlp = None
-
-try:
+    from .ytdlp_bridge import Runtime, find_runtime
     from .format_parser import format_filesize, parse_playlist_info, parse_video_formats
     from .storage_manager import get_storage_manager, save_list_model_data, load_list_model_data
     from .url_validator import (is_valid_playlist_url, is_valid_url, is_valid_video_url, 
                                 is_valid_playlist, supports_playlists, get_platform_name)
 except ImportError:
+    from ytdlp_bridge import Runtime, find_runtime
     from format_parser import format_filesize, parse_playlist_info, parse_video_formats
     from storage_manager import get_storage_manager, save_list_model_data, load_list_model_data
     from url_validator import (is_valid_playlist_url, is_valid_url, is_valid_video_url, 
                                is_valid_playlist, supports_playlists, get_platform_name)
+
+# Builds for a system Python that yt-dlp no longer supports bundle their own
+# runtime. Everything else runs yt-dlp directly inside this process.
+runtime_python = find_runtime(current_dir)
+if runtime_python:
+    yt_dlp = Runtime(runtime_python)
+else:
+    try:
+        import yt_dlp
+    except ImportError as e:
+        print(f"[download_manager] WARNING: yt-dlp not installed: {e}")
+        yt_dlp = None
+    except Exception as e:
+        print(f"[download_manager] ERROR importing yt-dlp: {e}")
+        yt_dlp = None
 
 class DownloadManager:
     """
@@ -192,6 +200,7 @@ class DownloadManager:
                 - subtitle: Download subtitles flag (optional)
                 - caption: Download captions flag (optional)
                 - embedded: Embed subtitles flag (optional)
+                - extractAudio: Keep only the audio of the download (optional)
                 
         Returns:
             Dictionary with success status and download_id for tracking:
@@ -261,22 +270,17 @@ class DownloadManager:
             
             def postprocessor_hook(d):
                 if d['status'] == 'finished':
-                    filename = d.get('info_dict', {}).get('filepath', 'Unknown')
-                    print(f"[action_download] Post-processing complete: {filename}")
+                    filename = d.get('info_dict', {}).get('filepath') or 'Unknown'
+                    print(f"[action_download] Post-processing step complete: {filename}")
                     
+                    # Later postprocessors may still move or replace the file.
+                    # download_thread reports "finished" once all of them ran.
                     self.last_progress_time[download_id] = {
-                        'progress': 100.0,
-                        'status': 'finished',
+                        'progress': 99.0,
+                        'status': 'processing',
                         'filename': filename,
                         'timestamp': time.time()
                     }
-                    
-                    self.storage.add_download_entry({
-                        'url': video_url,
-                        'filename': os.path.basename(filename),
-                        'path': filename,
-                        'timestamp': time.time(),
-                    })
             
             output_template = os.path.join(output_path, output_name)
             
@@ -303,6 +307,13 @@ class DownloadManager:
                     ydl_opts['postprocessors'] = [{
                         'key': 'FFmpegEmbedSubtitle',
                     }]
+            
+            if options.get('extractAudio', False):
+                # 'best' keeps the original audio stream without re-encoding it.
+                ydl_opts.setdefault('postprocessors', []).append({
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'best',
+                })
             
             def download_thread():
                 try:
@@ -432,15 +443,14 @@ def action_submit(url, download_type=0):
         thumbnail_url = data.get('thumbnail')
         video_id = data.get('videoUrl', url)
         
+        storage = get_storage_manager()
+        timestamp = int(time.time() * 1000)
+        rand = random.randint(1000, 9999)
+        entry_id = f"entry_{timestamp}_{rand}"
+        data['entryId'] = entry_id
+        
         if thumbnail_url and video_id:
-            storage = get_storage_manager()
-            timestamp = int(time.time() * 1000)
-            rand = random.randint(1000, 9999)
-            entry_id = f"entry_{timestamp}_{rand}"
-            
-            cached_thumbnail = storage.download_thumbnail(thumbnail_url, video_id, entry_id)
-            data['thumbnail'] = cached_thumbnail
-            data['entryId'] = entry_id
+            data['thumbnail'] = storage.download_thumbnail(thumbnail_url, video_id, entry_id)
     
     return result
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022  RAVEN Developers Ltd.
+ * Copyright (C) 2022  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,16 +13,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 import QtQml 2.2
 import QtQuick 2.7
-import QtQuick.Controls 2.2
-import QtQuick.Layouts 1.3
 import Qt.labs.settings 1.0
-import Qt.labs.platform 1.0
 import io.thp.pyotherside 1.4
 
-import Lomiri.Content 1.1
 import Lomiri.Components 1.3
 import Lomiri.Components.Popups 1.3
 
@@ -34,78 +29,66 @@ MainView {
     objectName: 'mainView'
     applicationName: 'raven.downloader.shohag'
     automaticOrientation: true
+    anchorToKeyboard: true
 
     width: units.gu(50)
     height: units.gu(75)
 
-    property int margin: units.gu(1)
+    // A video or playlist link is being looked up.
+    property bool fetching: false
+
+    signal fetchSucceeded()
+    signal playlistModeRequested()
 
     theme: ThemeSettings {
-        id: appTheme
+        // An empty name follows the system theme.
         name: generalSettings.themeName
     }
-    
-    Connections {
-        target: generalSettings
-        function onThemeNameChanged() {
-            appTheme.name = generalSettings.themeName
-        }
-    }
-    
+
     MainPageDialogs {
         id: mainDialogs
-    }
-    
-    Component {
-        id: aboutDialog
-        AboutPage {}
     }
 
     DownloadItemManager {
         id: downloadManager
         pythonInstance: python
+        autoStartNewItems: generalSettings.autoDownload
+        audioOnlyNewItems: generalSettings.audioOnlyDefault
     }
 
     PlaylistProcessor {
         id: playlistProcessor
         pythonInstance: python
-        
+
         onVideoFormatsReady: function(formats) {
             downloadManager.addVideo(formats);
-            if (pageStack.currentPage && pageStack.currentPage.objectName === 'mainPageItem') {
-                pageStack.currentPage.showDownloadItems();
-            }
         }
-        
-        onProcessingComplete: function(title, count) {
-            pageLoadingOverlay.running = false;
+
+        onProcessingComplete: function(title, added, total) {
             PopupUtils.open(mainDialogs.playlistFinished, root, {
                 playlistTitle: title,
-                videoCount: count
+                addedCount: added,
+                totalCount: total
             });
         }
-        
+
         onError: function(error) {
             console.log("[MainPage] Playlist processing error:", error);
         }
     }
-    
+
     Settings {
         id: generalSettings
         category: "GeneralSettings"
 
-        property string themeName: "Lomiri.Components.Themes.Ambiance"
+        property string themeName: ""
         property bool downloadSubtitle: false
         property bool downloadCaption: false
         property bool embeddedSubtitle: false
         property bool autoDownload: false
+        property bool audioOnlyDefault: false
     }
-    
-    ContentStore {
-        id: contentStore
-        scope: ContentScope.App
-    }
-    
+
     Component {
         id: contentSharePage
         ContentHubDialog {
@@ -113,12 +96,21 @@ MainView {
             pageStack: root.pageStack
         }
     }
-    
+
     Component {
-        id: exportPage
-        ExportPage {
-            contentType: ContentType.All
-            handler: ContentHandler.Source
+        id: settingsPage
+        SettingsPage {
+            pythonInstance: python
+            settings: generalSettings
+            activeDownloads: downloadManager.activeDownloads
+            historyCount: downloadManager.count
+        }
+    }
+
+    Component {
+        id: aboutPage
+        AboutPage {
+            pythonInstance: python
         }
     }
 
@@ -127,78 +119,51 @@ MainView {
             downloadedFilePath: filePath
         });
     }
-    
+
     function urlHandler(url, isPlaylist) {
-        pageLoadingOverlay.running = true;
-        
+        fetching = true;
+
         var validationFunc = isPlaylist ? 'is_valid_playlist' : 'is_valid_video_url';
         var invalidWarning = isPlaylist ? mainDialogs.invalidPlaylistURL : mainDialogs.invalidURL;
-        
+
         python.call('download_manager.' + validationFunc, [url], function(isValid) {
             if (!isValid) {
-                pageLoadingOverlay.running = false;
+                fetching = false;
                 PopupUtils.open(invalidWarning, root);
                 return;
             }
-            
+
             python.call('download_manager.action_submit', [url, isPlaylist ? 1 : 0], function(result) {
-                pageLoadingOverlay.running = false;
-                
+                fetching = false;
+
                 if (result && result.error) {
-                    handleSubmitError(result.error);
+                    handleSubmitError(result.error, url);
                 } else if (result && result.type === 'playlist') {
+                    fetchSucceeded();
                     playlistProcessor.processPlaylist(result.data);
                 } else if (result && result.type === 'video') {
+                    fetchSucceeded();
                     downloadManager.addVideo(result.data);
-                    if (pageStack.currentPage && pageStack.currentPage.objectName === 'mainPageItem') {
-                        pageStack.currentPage.showDownloadItems();
-                    }
                 }
             });
         });
     }
-    
-    function handleSubmitError(error) {
+
+    function handleSubmitError(error, url) {
         if (error === 'playlist_as_video') {
-            PopupUtils.open(mainDialogs.playlistAsVideo, root);
+            PopupUtils.open(mainDialogs.playlistAsVideo, root, { url: url });
         } else {
-            PopupUtils.open(mainDialogs.processError, root, { text: error });
+            PopupUtils.open(mainDialogs.processError, root, { text: Utils.friendlyError(error) });
         }
     }
 
-    Connections {
-        target: python
-        
-        function onReceived(event, data) {
-            switch(event) {
-                case 'downloadFinished':
-                    PopupUtils.open(exportPage, root, { url: data[1] });
-                    break;
-                case 'downloadProgress':
-                    downloadManager.updateProgress(data[0], data[1]);
-                    break;
-                case 'generalMessage':
-                    pageLoadingOverlay.running = false;
-                    PopupUtils.open(mainDialogs.processError, root, { text: data });
-                    break;
-                default:
-                    console.error('[MainPage] Unknown event received:', event);
-            }
-        }
-    }
-
+    // Connections below use the older "onSignal:" form on purpose. Qt 5.12 on
+    // Ubuntu Touch 20.04 silently ignores the newer "function onSignal()" form.
     Connections {
         target: Qt.application
-        function onAboutToQuit() {
-            downloadManager.saveHistory();
-        }
+        onAboutToQuit: downloadManager.saveHistory()
     }
-    
-    LoadingOverlay {
-        id: pageLoadingOverlay
-        running: false
-    }
-    
+
     PageStack {
         id: pageStack
         anchors.fill: parent
@@ -210,291 +175,177 @@ MainView {
 
     Component {
         id: mainPageComponent
-        
+
         Page {
             id: mainPage
             objectName: 'mainPageItem'
             anchors.fill: parent
-            StateSaver.properties: "title"
-            StateSaver.enabled: true
+
+            property bool historyLoading: true
 
             header: PageHeader {
-                id: header
                 title: i18n.tr("RAVEN Downloader")
-                
+
                 trailingActionBar.actions: [
                     Action {
                         iconName: "info"
                         text: i18n.tr("About")
-                        onTriggered: PopupUtils.open(aboutDialog, root)
+                        onTriggered: pageStack.push(aboutPage)
+                    },
+                    Action {
+                        iconName: "settings"
+                        text: i18n.tr("Settings")
+                        onTriggered: pageStack.push(settingsPage)
                     }
                 ]
-            }
 
-            function showDownloadItems() {
-                if (!downloadItemsContainer.visible) {
-                    blankDownloadPage.visible = false;
-                    downloadItemsContainer.visible = true;
+                extension: UrlBar {
+                    id: urlBar
+                    anchors {
+                        left: parent.left
+                        right: parent.right
+                        bottom: parent.bottom
+                    }
+                    busy: root.fetching || playlistProcessor.isProcessing
+                    onSubmitted: root.urlHandler(url, isPlaylist)
                 }
             }
-            
-            function hideDownloadItems() {
-                downloadItemsContainer.visible = false;
-                blankDownloadPage.visible = true;
+
+            Connections {
+                target: root
+                onFetchSucceeded: urlBar.text = ""
+                onPlaylistModeRequested: urlBar.setPlaylistMode(true)
             }
 
             Component.onCompleted: {
-                historyLoadingOverlay.running = true;
-                
-                downloadManager.loadHistory(function(hasHistory) {
-                    historyLoadingOverlay.running = false;
-                    
-                    if (hasHistory) {
-                        showDownloadItems();
-                    } else {
-                        hideDownloadItems();
-                    }
+                downloadManager.loadHistory(function() {
+                    historyLoading = false;
                 });
             }
-            
+
             function reloadHistoryUI() {
-                historyLoadingOverlay.running = true;
-                
-                downloadManager.reloadHistory(function(hasHistory) {
-                    historyLoadingOverlay.running = false;
-                    mainScroll.isRefreshing = false;
-                    
-                    if (hasHistory) {
-                        showDownloadItems();
-                    } else {
-                        hideDownloadItems();
-                    }
+                historyLoading = true;
+                downloadManager.reloadHistory(function() {
+                    historyLoading = false;
                 });
             }
 
-            ColumnLayout {
-                id: searchBarLayout
-                anchors.topMargin: header.height
-                anchors.fill: parent
-                anchors.bottom: bottomEdge.top
+            Flickable {
+                id: mainScroll
+                objectName: "mainScroll"
+                anchors {
+                    top: mainPage.header.bottom
+                    left: parent.left
+                    right: parent.right
+                    bottom: parent.bottom
+                }
+                clip: true
+                // Fills the view at least, so that the empty state centers in it.
+                contentHeight: Math.max(listColumn.height, height)
 
-                Flickable {
-                    id: mainScroll
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: mainPage.height - header.header - bottomEdge.height - units.gu(2)
-                    contentHeight: inputPanel.height + downloadContainerHeading.height + 
-                                  (downloadManager.count ? downloadManager.count * units.gu(10) : units.gu(10)) + units.gu(12)
-                    
-                    // Pull-to-refresh state
-                    property bool isRefreshing: false
-                    property real pullThreshold: units.gu(15)
-                    property bool isPulledEnough: contentY < -pullThreshold && atYBeginning
-                    
-                    onContentYChanged: {
-                        // Update pull indicator visibility
-                        if (atYBeginning && contentY < 0 && !isRefreshing) {
-                            pullToRefreshIndicator.visible = true;
-                        } else if (contentY >= 0 || isRefreshing) {
-                            pullToRefreshIndicator.visible = false;
-                        }
-                    }
-                    
-                    onMovementEnded: {
-                        // Trigger refresh only on release if pulled enough
-                        if (isPulledEnough && !isRefreshing && atYBeginning) {
-                            isRefreshing = true;
-                            pullToRefreshIndicator.visible = false;
-                            mainPage.reloadHistoryUI();
-                        }
-                    }
-                    
-                    // Pull-to-refresh indicator
-                    Item {
-                        id: pullToRefreshIndicator
-                        visible: false
-                        anchors {
-                            top: parent.top
-                            topMargin: -height
-                            horizontalCenter: parent.horizontalCenter
-                        }
+                PullToRefresh {
+                    parent: mainScroll
+                    // Reloading rebuilds the list, which would orphan running downloads.
+                    enabled: downloadManager.activeDownloads === 0
+                    refreshing: mainPage.historyLoading
+                    onRefresh: mainPage.reloadHistoryUI()
+                }
+
+                Column {
+                    id: listColumn
+                    width: mainScroll.width
+
+                    // Shown while the videos of a playlist are being looked up.
+                    ListItem {
                         width: parent.width
-                        height: units.gu(6)
-                        
-                        Rectangle {
-                            anchors.fill: parent
-                            color: theme.palette.normal.background
-                            opacity: 0.9
-                        }
-                        
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: units.gu(1)
-                            
-                            Icon {
-                                name: mainScroll.isPulledEnough ? "view-refresh" : "go-down"
-                                width: units.gu(3)
+                        height: visible ? playlistLayout.height + divider.height : 0
+                        visible: playlistProcessor.isProcessing
+
+                        ListItemLayout {
+                            id: playlistLayout
+                            title.text: i18n.tr("Adding playlist: %1 of %2")
+                                            .arg(playlistProcessor.processedVideos)
+                                            .arg(playlistProcessor.totalVideos)
+                            subtitle.text: playlistProcessor.playlistTitle
+
+                            ActivityIndicator {
+                                SlotsLayout.position: SlotsLayout.Leading
                                 height: units.gu(3)
-                                anchors.verticalCenter: parent.verticalCenter
+                                width: height
+                                running: playlistProcessor.isProcessing
                             }
-                            
-                            Label {
-                                text: mainScroll.isPulledEnough ? 
-                                      i18n.tr("Release to refresh") : 
-                                      i18n.tr("Pull down to refresh")
-                                anchors.verticalCenter: parent.verticalCenter
-                                font.bold: mainScroll.isPulledEnough
-                            }
-                        }
-                    }
 
-                    ColumnLayout {
-                        id: inputPanel
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-
-                        anchors {
-                            top: parent.top
-                            left: parent.left
-                            right: parent.right
-                            margins: units.gu(1)
-                        }
-                        
-                        TextField {
-                            id: urlContainer
-                            Layout.fillWidth: true
-                            placeholderText: i18n.tr("Put YouTube video or playlist URL here")
-                            Keys.onReturnPressed: urlHandler(urlContainer.text, downloadType.index === 1)
-                        }
-                        
-                        CustomComboPopup {
-                            id: downloadType
-                            Layout.fillWidth: true
-                            heading: i18n.tr("Select download type")
-                            defaultValue: true
-                            dropdownModel: [i18n.tr("single video"), i18n.tr("playlist")]
-                        }
-
-                        Button {
-                            id: submitButton
-                            Layout.fillWidth: true
-                            text: i18n.tr("Submit")
-                            onClicked: {
-                                urlHandler(urlContainer.text, downloadType.index === 1);
+                            Button {
+                                SlotsLayout.position: SlotsLayout.Trailing
+                                text: i18n.tr("Stop")
+                                width: units.gu(8)
+                                onClicked: playlistProcessor.cancel()
                             }
                         }
                     }
 
-                    Column {
-                        id: downloadItemsContainer
-                        width: parent.width
-                        anchors.top: inputPanel.bottom
-                        anchors.topMargin: units.gu(1)
-                        spacing: units.gu(1)
-
-                        Label {
-                            id: downloadContainerHeading
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                leftMargin: units.gu(1)
-                            }
-                            text: i18n.tr("Downloaded Files")
-                        }
-                        
-                        Item {
-                            id: historyLoadingContainer
-                            width: parent.width
-                            height: units.gu(20)
-                            visible: historyLoadingOverlay.running
-                            
-                            LoadingOverlay {
-                                id: historyLoadingOverlay
-                                running: false
-                                indicatorSize: units.gu(5)
-                                color: "transparent"
-                            }
-                        }
-
-                        Repeater {
-                            id: downloadItems
-                            anchors {
-                                top: downloadContainerHeading.bottom
-                                bottom: parent.bottom
-                                right: parent.right
-                                left: parent.left
-                            }
-
-                            model: downloadManager.model
-                            delegate: MediaItem {
-                                anchors {
-                                    left: parent.left
-                                    right: parent.right
-                                    margins: units.gu(1)
-                                }
-                                height: units.gu(10)
-
-                                videoTitle: vTitle
-                                thumbnail: vThumbnail
-                                duration: vDuration
-                                videoLink: vID
-                                
-                                entryId: model.entryId || ''
-                                pythonInstance: python
-
-                                vcodec: Utils.safeParseJSON(vCodec)
-                                resolutionModel: Utils.safeParseJSON(vResolutions)
-                                videoExts: Utils.safeParseJSON(vVideoExts)
-                                videoFormats: Utils.safeParseJSON(vVideoFormats)
-                                videoProgress: vVideoProgress
-                                videoIndex: vVideoIndex
-                                audioIndex: vAudioIndex
-                                selectedVideoCodec: model.selectedVideoCodec || ''
-                                selectedAudioCodec: model.selectedAudioCodec || ''
-
-                                acodec: Utils.safeParseJSON(aCodec)
-                                audioExts: Utils.safeParseJSON(vAudioExts)
-                                audioFormats: Utils.safeParseJSON(vAudioFormats)
-                                audioBitrate: Utils.safeParseJSON(vABR)
-                                audioSizes: Utils.safeParseJSON(vAudioSizes)
-
-                                sizeModel: Utils.safeParseJSON(vSizeModel)
-                                indexID: vIndex
-                            }
-                        }
+                    SectionLabel {
+                        visible: downloadManager.count > 0
+                        text: i18n.tr("Downloads (%1)").arg(downloadManager.count)
                     }
-                    
-                    ColumnLayout {
-                        id: blankDownloadPage
-                        visible: false
-                        Layout.fillHeight: true
-                        Layout.fillWidth: true
-                        height: units.gu(20)
-                        anchors {
-                            margins: units.gu(2)
-                            leftMargin: units.gu(1)
-                            top: inputPanel.bottom
-                            left: parent.left
-                            right: parent.right
-                            bottom: parent.bottom
-                        }
 
-                        Label {
-                            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                            text: i18n.tr("No downloads yet.")
-                            font.pixelSize: units.gu(2)
+                    Repeater {
+                        id: downloadItems
+                        model: downloadManager.model
+
+                        delegate: MediaItem {
+                            width: listColumn.width
+
+                            videoTitle: vTitle
+                            thumbnail: vThumbnail
+                            duration: vDuration
+                            videoLink: vID
+
+                            entryId: model.entryId || ''
+                            filePath: model.vFilePath || ''
+                            pythonInstance: python
+
+                            vcodec: Utils.safeParseJSON(vCodec)
+                            resolutionModel: Utils.safeParseJSON(vResolutions)
+                            videoExts: Utils.safeParseJSON(vVideoExts)
+                            videoFormats: Utils.safeParseJSON(vVideoFormats)
+                            videoProgress: vVideoProgress
+                            videoIndex: vVideoIndex
+                            audioIndex: vAudioIndex
+                            selectedVideoCodec: model.selectedVideoCodec || ''
+                            selectedAudioCodec: model.selectedAudioCodec || ''
+
+                            acodec: Utils.safeParseJSON(aCodec)
+                            audioExts: Utils.safeParseJSON(vAudioExts)
+                            audioFormats: Utils.safeParseJSON(vAudioFormats)
+                            audioBitrate: Utils.safeParseJSON(vABR)
+                            audioSizes: Utils.safeParseJSON(vAudioSizes)
+
+                            sizeModel: Utils.safeParseJSON(vSizeModel)
+                            indexID: vIndex
                         }
                     }
                 }
+
+                ActivityIndicator {
+                    anchors.centerIn: parent
+                    running: mainPage.historyLoading && downloadManager.count === 0
+                    visible: running
+                }
+
+                EmptyState {
+                    anchors.centerIn: parent
+                    width: Math.min(parent.width - units.gu(6), units.gu(40))
+                    visible: !mainPage.historyLoading && downloadManager.count === 0
+                             && !playlistProcessor.isProcessing
+                    title: i18n.tr("No downloads yet")
+                    description: i18n.tr("Paste a link from YouTube, Vimeo, TikTok and more above, then tap Fetch to choose a quality.")
+                }
             }
 
-            CustomBottomEdge {
-                id: bottomEdge
-                enabled: true
-                height: root.height
-                hint.text: i18n.tr("Swipe for Settings")
-                hint.visible: enabled
-                pythonInstance: python
+            Scrollbar {
+                flickableItem: mainScroll
+                align: Qt.AlignTrailing
             }
         }
     }
@@ -506,12 +357,9 @@ MainView {
             addImportPath(Qt.resolvedUrl('../src/'));
             importModule('download_manager', function() {});
             importModule('storage_manager', function() {});
-            
-            // Set up handler for historyCleared event
+
             setHandler('historyCleared', function() {
-                if (pageStack.currentPage && pageStack.currentPage.objectName === 'mainPageItem') {
-                    pageStack.currentPage.reloadHistoryUI();
-                }
+                downloadManager.reloadHistory();
             });
         }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022  RAVEN Developers Ltd.
+ * Copyright (C) 2022  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,60 +13,34 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 import QtQuick 2.7
-import QtQuick.Layouts 1.0
-import QtQuick.Controls 2.2
-import Qt.labs.settings 1.0
 import Lomiri.Components 1.3
-import Lomiri.Components.ListItems 1.3
+import Lomiri.Components.Popups 1.3
 
 import "Components"
 
-Page { 
+Page {
     id: settingsPageRoot
-    
+
     property var pythonInstance
-    
-    Settings {
-        id: localSettings
-        category: "GeneralSettings"
-        
-        property string themeName: "Lomiri.Components.Themes.Ambiance"
-        property bool downloadSubtitle: false
-        property bool downloadCaption: false
-        property bool embeddedSubtitle: false
-        property bool autoDownload: false
-    }
+    // The application's single settings object, so that changes apply at once.
+    property var settings
+    property int activeDownloads: 0
+    property int historyCount: 0
 
-    property var downloadLocationModel: [
-        "Downloads (/home/phablet/Downloads)",
-        "Documents (/home/phablet/Documents)",
-        "Videos (/home/phablet/Videos)"
+    // Theme names by position in the selector. An empty name follows the system.
+    readonly property var themeNames: [
+        "",
+        "Lomiri.Components.Themes.Ambiance",
+        "Lomiri.Components.Themes.SuruDark"
     ]
-
-    property var themeModel: [
-        i18n.tr("System theme"),
-        i18n.tr("Ambiance theme"),
-        i18n.tr("Suru-dark theme")
-    ]
-
-    function getDownloadLocation (data) {
-        return data.split(" ")[1].replace("(", "").replace(")", "");
-    }
-
-    function getIndexFromModel(data) {
-        for (var i = 0; i < downloadLocationModel.length; i++) {
-            if (downloadLocationModel[i].includes(data))
-                return i;
-        }
-    }
 
     header: PageHeader {
         title: i18n.tr("Settings")
     }
 
     Flickable {
+        id: settingsScroll
         clip: true
         anchors {
             top: settingsPageRoot.header.bottom
@@ -74,144 +48,142 @@ Page {
             right: parent.right
             bottom: parent.bottom
         }
-        contentWidth: rectRoot.width
-        contentHeight: rectRoot.height
-        flickableDirection: Flickable.VerticalFlick
-        ScrollBar.vertical: ScrollBar { visible: false }
+        contentHeight: settingsColumn.height + units.gu(2)
 
-        Rectangle {
-            id: rectRoot
-            width: settingsPageRoot.width > 0 ? settingsPageRoot.width : units.gu(50)
-            height: childrenRect.height + units.gu(4)
-            color: "transparent"
+        Column {
+            id: settingsColumn
+            width: settingsScroll.width
 
-            SettingsCheckbox {
-                id: subtitleCheckboxContainer
-                anchors {
-                    top: parent.top
-                    left: parent.left
-                    right: parent.right
-                    margins: units.gu(2)
-                }
-                labelText: i18n.tr("Download available subtitles")
-                checked: localSettings.downloadSubtitle
-                onToggled: {
-                    localSettings.downloadSubtitle = checked
-                    localSettings.downloadCaption = checked
-                    localSettings.embeddedSubtitle = checked
-                }
+            SectionLabel {
+                text: i18n.tr("Downloads")
             }
 
-            ColumnLayout {
-                id: subCapContainer
-                anchors {
-                    top: subtitleCheckboxContainer.bottom
-                    left: parent.left
-                    right: parent.right
-                    topMargin: units.gu(1)
-                    leftMargin: units.gu(3)
-                    rightMargin: units.gu(2)
-                    bottomMargin: units.gu(1)
-                }
+            SettingsCheckbox {
+                labelText: i18n.tr("Download automatically")
+                descriptionText: i18n.tr("Start in the best quality as soon as a video is added")
+                checked: settings.autoDownload
+                onToggled: settings.autoDownload = checked
+            }
 
-                SettingsCheckbox {
-                    id: captionCheckbox
-                    Layout.fillWidth: true
-                    labelText: i18n.tr("Download captions (If subtitle unavailable)")
-                    checked: localSettings.downloadCaption
-                    isEnabled: localSettings.downloadSubtitle
-                    onToggled: {
-                        localSettings.downloadCaption = checked
-                    }
-                }
+            SettingsCheckbox {
+                labelText: i18n.tr("Audio only by default")
+                descriptionText: i18n.tr("New videos start with no video. You can still change this for each one.")
+                checked: settings.audioOnlyDefault
+                onToggled: settings.audioOnlyDefault = checked
+            }
 
-                SettingsCheckbox {
-                    id: embeddedSubtitleCheckbox
-                    Layout.fillWidth: true
-                    labelText: i18n.tr("Embed subtitles in files")
-                    checked: localSettings.embeddedSubtitle
-                    isEnabled: localSettings.downloadSubtitle
-                    onToggled: {
-                        localSettings.embeddedSubtitle = checked
-                    }
+            SectionLabel {
+                text: i18n.tr("Subtitles")
+            }
+
+            SettingsCheckbox {
+                labelText: i18n.tr("Download subtitles")
+                descriptionText: i18n.tr("When the video provides them")
+                checked: settings.downloadSubtitle
+                onToggled: {
+                    settings.downloadSubtitle = checked;
+                    settings.downloadCaption = checked;
+                    settings.embeddedSubtitle = checked;
                 }
             }
 
             SettingsCheckbox {
-                id: autoDownloadCheckbox
-                anchors {
-                    top: subCapContainer.bottom
-                    left: parent.left
-                    right: parent.right
-                    margins: units.gu(2)
-                }
-                labelText: i18n.tr("Auto Download (best format)")
-                checked: localSettings.autoDownload
-                onToggled: {
-                    localSettings.autoDownload = checked
-                }
+                labelText: i18n.tr("Use automatic captions")
+                descriptionText: i18n.tr("When no subtitles are available")
+                checked: settings.downloadCaption
+                isEnabled: settings.downloadSubtitle
+                onToggled: settings.downloadCaption = checked
             }
 
-            ThinDivider {
-                id: divider
-                anchors {
-                    margins: units.gu(2)
-                    topMargin: units.gu(3)
-                    top: autoDownloadCheckbox.bottom
-                    right: parent.right
-                    left: parent.left
-                }
+            SettingsCheckbox {
+                labelText: i18n.tr("Embed subtitles in the file")
+                checked: settings.embeddedSubtitle
+                isEnabled: settings.downloadSubtitle
+                onToggled: settings.embeddedSubtitle = checked
             }
 
-            OptionSelector {
-                id: themeSelector
-                model: themeModel
-                anchors {
-                    top: divider.bottom
-                    left: parent.left
-                    right: parent.right
-                    margins: units.gu(2)
-                }
-                
-                Component.onCompleted: {
-                    if (localSettings.themeName === "Lomiri.Components.Themes.SuruDark") {
-                        selectedIndex = 2
-                    } else if (localSettings.themeName === "Lomiri.Components.Themes.Ambiance") {
-                        selectedIndex = 1
-                    } else {
-                        selectedIndex = 0
-                    }
-                }
-                
-                onSelectedIndexChanged: {
-                    if (selectedIndex === 0) {
-                        localSettings.themeName = "Lomiri.Components.Themes.Ambiance"
-                    } else if (selectedIndex === 1) {
-                        localSettings.themeName = "Lomiri.Components.Themes.Ambiance"
-                    } else if (selectedIndex === 2) {
-                        localSettings.themeName = "Lomiri.Components.Themes.SuruDark"
+            SectionLabel {
+                text: i18n.tr("Appearance")
+            }
+
+            Repeater {
+                model: [
+                    i18n.tr("Follow system"),
+                    i18n.tr("Light"),
+                    i18n.tr("Dark")
+                ]
+
+                delegate: ListItem {
+                    width: settingsColumn.width
+                    height: themeLayout.height + divider.height
+                    onClicked: settings.themeName = themeNames[model.index]
+
+                    ListItemLayout {
+                        id: themeLayout
+                        title.text: modelData
+
+                        Icon {
+                            SlotsLayout.position: SlotsLayout.Trailing
+                            width: units.gu(2.5)
+                            height: width
+                            name: "tick"
+                            color: theme.palette.normal.positive
+                            opacity: Math.max(0, themeNames.indexOf(settings.themeName)) === model.index ? 1 : 0
+                        }
                     }
                 }
             }
 
-            LomiriButton {
-                id: historyClearButton
-                anchors{
-                    top: themeSelector.bottom
-                    topMargin: units.gu(2)
-                    left: parent.left
-                    leftMargin: units.gu(2)
-                    right: parent.right
-                    rightMargin: units.gu(2)
+            SectionLabel {
+                text: i18n.tr("Storage")
+            }
+
+            ListItem {
+                width: parent.width
+                height: clearLayout.height + divider.height
+                enabled: settingsPageRoot.historyCount > 0 && settingsPageRoot.activeDownloads === 0
+                onClicked: PopupUtils.open(clearConfirmation, settingsPageRoot)
+
+                ListItemLayout {
+                    id: clearLayout
+                    title.text: i18n.tr("Clear all history")
+                    title.color: enabled ? theme.palette.normal.negative : theme.palette.disabled.backgroundText
+                    subtitle.text: settingsPageRoot.activeDownloads > 0
+                                   ? i18n.tr("Available when downloads have finished")
+                                   : i18n.tr("Removes the list and files you have not saved")
+
+                    Icon {
+                        SlotsLayout.position: SlotsLayout.Trailing
+                        width: units.gu(2.5)
+                        height: width
+                        name: "delete"
+                        color: clearLayout.title.color
+                    }
                 }
-                iconName: "delete"
-                text: i18n.tr("Clear All History")
-                colorBut: LomiriColors.red
-                colorButText: "white"
+            }
+        }
+    }
+
+    Component {
+        id: clearConfirmation
+
+        Dialog {
+            id: clearDialog
+            title: i18n.tr("Clear all history?")
+            text: i18n.tr("This removes the whole list and any downloaded files you have not saved elsewhere. It cannot be undone.")
+
+            Button {
+                text: i18n.tr("Clear")
+                color: theme.palette.normal.negative
                 onClicked: {
-                    // Clear all download history - signal will trigger automatic reload
-                    pythonInstance.call('storage_manager.clear_download_history', [pythonInstance], function(result) {});
+                    pythonInstance.call('storage_manager.clear_download_history', [], function(result) {});
+                    PopupUtils.close(clearDialog);
                 }
+            }
+
+            Button {
+                text: i18n.tr("Cancel")
+                onClicked: PopupUtils.close(clearDialog)
             }
         }
     }

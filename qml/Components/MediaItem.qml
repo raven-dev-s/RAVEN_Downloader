@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022  RAVEN Developers Ltd.
+ * Copyright (C) 2022  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,29 +13,16 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 import QtQuick 2.7
 import QtQuick.Layouts 1.3
-import QtQuick.Controls 2.2
-import QtGraphicalEffects 1.0
 import Lomiri.Components 1.3
-import Lomiri.Components.Popups 1.3
+
+import "../js/utils.js" as Utils
 
 ListItem {
-    id: gridBox
-    
-    divider {
-        colorFrom: "transparent"
-        colorTo: "transparent"
-    }
-    height: gridLayout.height
-    width: gridLayout.width
-    Layout.fillWidth: true
-    Layout.minimumWidth: gridLayout.Layout.minimumWidth
-    
-    MediaItemDialogs {
-        id: mediaDialogs
-    }
+    id: mediaItem
+
+    height: content.height + units.gu(3) + divider.height
 
     property alias  videoTitle          : titleBox.text
     property string thumbnail           : ""
@@ -43,66 +30,96 @@ ListItem {
     property string videoLink           : ""
     property int    indexID
     property string entryId             : ""
+    property alias  filePath            : downloadButton.filePath
 
-    property var    vcodec              : null
-    property var    resolutionModel     : null
-    property var    videoExts           : null
-    property var    videoFormats        : null
+    property var    vcodec              : []
+    property var    resolutionModel     : []
+    property var    videoExts           : []
+    property var    videoFormats        : []
+    property var    sizeModel           : []
     property alias  videoIndex          : resolutionPopup.index
     property string selectedVideoCodec  : ""
 
-    property var    acodec              : null
-    property var    audioExts           : null
-    property var    audioFormats        : null
-    property var    audioBitrate        : null
-    property var    audioSizes          : null
+    property var    acodec              : []
+    property var    audioExts           : []
+    property var    audioFormats        : []
+    property var    audioBitrate        : []
+    property var    audioSizes          : []
     property alias  audioIndex          : audioPopup.index
     property string selectedAudioCodec  : ""
 
-    property var    langs               : null
-    property var    langIds             : null
-    property var    sizeModel           : null
-    property alias  videoProgress       : videoProgressBar.value
+    property real   videoProgress       : 0
     property var    pythonInstance      : null
 
-    property bool   downloadUnavailable : resolutionModel === null && vcodec === null
-    property var    comboHeading        : [
-        i18n.tr("select audio"), 
-        i18n.tr("select language"), 
-        i18n.tr("select resolution")
-    ]
+    readonly property bool hasVideoFormats: !!videoFormats && videoFormats.length > 0
+    readonly property bool hasAudioFormats: !!audioFormats && audioFormats.length > 0
+    // "Audio only" is listed after the last video format, so that the positions
+    // of real formats stay the same in entries saved by earlier versions.
+    readonly property bool audioOnly: hasVideoFormats && resolutionPopup.index >= videoFormats.length
+
+    leadingActions: ListItemActions {
+        actions: [
+            Action {
+                iconName: "delete"
+                text: i18n.tr("Delete")
+                enabled: !downloadButton.active
+                onTriggered: downloadManager.removeEntry(mediaItem.entryId)
+            }
+        ]
+    }
 
     Component.onCompleted: {
-        restoreCodecSelections();
-        
-        if (generalSettings.autoDownload) {
-            initiateAutoDownload();
+        downloadButton.progress = videoProgress;
+        if (downloadManager.consumeAutoStart(videoLink)) {
+            var options = getFormats();
+            if (audioOnly) {
+                options["format"] = "bestaudio/best";
+                options["extractAudio"] = true;
+            } else {
+                options["format"] = "bestvideo+bestaudio/best";
+            }
+            downloadButton.start(options, true);
         }
     }
 
-    function restoreCodecSelections() {
-        if (selectedVideoCodec !== '' && vcodec) {
-            var videoIdx = vcodec.indexOf(selectedVideoCodec);
-            if (videoIdx >= 0) {
-                videoIndex = videoIdx;
-            }
+    function videoLabels() {
+        var labels = [];
+        for (var i = 0; i < videoFormats.length; i++) {
+            labels.push(Utils.shortResolution(resolutionModel[i]) + " · " + videoExts[i]);
         }
-        
-        if (selectedAudioCodec !== '' && acodec) {
-            var audioIdx = acodec.indexOf(selectedAudioCodec);
-            if (audioIdx >= 0) {
-                audioIndex = audioIdx;
-            }
+        if (labels.length > 0) {
+            labels.push(i18n.tr("Audio only"));
         }
+        return labels;
     }
 
-    function updateCodecSelection(isVideo, codec) {
-        if (isVideo) {
-            gridBox.selectedVideoCodec = codec;
-        } else {
-            gridBox.selectedAudioCodec = codec;
+    function videoDetails() {
+        var details = [];
+        for (var i = 0; i < videoFormats.length; i++) {
+            var size = Utils.formatBytes(sizeModel[i]);
+            details.push((vcodec[i] || "") + (size ? " · " + size : ""));
         }
-        gridBox.saveEntryMetadata();
+        if (details.length > 0) {
+            details.push(i18n.tr("No video, smaller file"));
+        }
+        return details;
+    }
+
+    function audioLabels() {
+        var labels = [];
+        for (var i = 0; i < audioFormats.length; i++) {
+            labels.push((audioBitrate[i] ? i18n.tr("%1k").arg(audioBitrate[i]) + " · " : "") + audioExts[i]);
+        }
+        return labels;
+    }
+
+    function audioDetails() {
+        var details = [];
+        for (var i = 0; i < audioFormats.length; i++) {
+            var size = Utils.formatBytes(audioSizes[i]);
+            details.push((acodec[i] || "") + (size ? " · " + size : ""));
+        }
+        return details;
     }
 
     function saveEntryMetadata() {
@@ -110,10 +127,20 @@ ListItem {
             console.log("[MediaItem] No entryId, skipping save");
             return;
         }
-        
+
         var currentVideoCodec = (vcodec && videoIndex >= 0 && videoIndex < vcodec.length) ? vcodec[videoIndex] : '';
         var currentAudioCodec = (acodec && audioIndex >= 0 && audioIndex < acodec.length) ? acodec[audioIndex] : '';
-        
+
+        // The model is what gets written on exit, so it has to stay current too.
+        downloadManager.updateEntry(entryId, {
+            vVideoProgress: downloadButton.progress,
+            vVideoIndex: videoIndex,
+            vAudioIndex: audioIndex,
+            selectedVideoCodec: currentVideoCodec,
+            selectedAudioCodec: currentAudioCodec,
+            vFilePath: filePath
+        });
+
         var entryData = {
             entryId: entryId,
             vTitle: videoTitle,
@@ -124,7 +151,7 @@ ListItem {
             vResolutions: JSON.stringify(resolutionModel || []),
             vVideoExts: JSON.stringify(videoExts || []),
             vVideoFormats: JSON.stringify(videoFormats || []),
-            vVideoProgress: videoProgress,
+            vVideoProgress: downloadButton.progress,
             aCodec: JSON.stringify(acodec || []),
             vAudioExts: JSON.stringify(audioExts || []),
             vAudioFormats: JSON.stringify(audioFormats || []),
@@ -136,9 +163,10 @@ ListItem {
             selectedAudioCodec: currentAudioCodec,
             vSizeModel: JSON.stringify(sizeModel || []),
             vIndex: parseInt(indexID) || 0,
+            vFilePath: filePath,
             timestamp: Date.now()
         };
-        
+
         if (pythonInstance) {
             pythonInstance.call('storage_manager.save_single_entry', [entryData], function(result) {
                 console.log('[MediaItem] Entry saved:', entryId);
@@ -148,150 +176,202 @@ ListItem {
         }
     }
 
+    // Sites such as SoundCloud offer audio only, and some report no codec
+    // details at all. Ask for what exists and let yt-dlp pick when nothing does.
     function getFormats() {
+        var parts = [];
+        if (hasAudioFormats) {
+            parts.push(audioFormats[audioPopup.index]);
+        }
+        if (hasVideoFormats && !audioOnly) {
+            parts.push(videoFormats[resolutionPopup.index]);
+        }
+
         var jsonObject = {
-            "format": audioFormats[audioPopup.index] + "+" + videoFormats[resolutionPopup.index],
+            "format": parts.length > 0 ? parts.join("+") : "best",
             "indexID": indexID
         };
 
-        if (generalSettings.setDownloadLocation) {
-            jsonObject["downloadLocation"] = generalSettings.customDownloadLocation;
+        if (audioOnly) {
+            // Some sites have no separate audio stream. Take the audio out of
+            // whatever they offer. Subtitles have nothing to go with either.
+            if (!hasAudioFormats) {
+                jsonObject["format"] = "best";
+                jsonObject["extractAudio"] = true;
+            }
+            return jsonObject;
         }
-        
+
         if (generalSettings.downloadSubtitle) {
             jsonObject["subtitle"] = true;
-            if (videoExts[resolutionPopup.index] == "mp4") {
+            if (videoExts && videoExts[resolutionPopup.index] == "mp4") {
                 jsonObject["strConvert"] = true;
             }
             if (generalSettings.embeddedSubtitle) {
                 jsonObject["embedded"] = true;
             }
         }
-        
+
         if (generalSettings.downloadCaption) {
             jsonObject["caption"] = true;
         }
-        
+
         return jsonObject;
     }
 
-    function initiateAutoDownload() {
-        var jsonObject = getFormats();
-        jsonObject["format"] = "bestaudio+bestvideo";
-        
-        python.call('download_manager.action_download', [videoLink, jsonObject], function() {
-            // Auto-download initiated
-        });
-        
-        if (downloadItems.itemAt(indexID)) {
-            downloadItems.itemAt(indexID).videoIndex = downloadItems.itemAt(indexID).vcodec.length - 1;
-            downloadItems.itemAt(indexID).audioIndex = downloadItems.itemAt(indexID).acodec.length - 1;
-        }
+    function formatChosen() {
+        // A saved file no longer matches the choice, so offer downloading again.
+        filePath = "";
+        downloadButton.progress = 0;
+        downloadButton.downloadState = "idle";
+        saveEntryMetadata();
     }
 
-    LoadingOverlay {
-        id: itemLoadingOverlay
-        running: false
-        indicatorSize: units.gu(5)
+    function statusText() {
+        switch (downloadButton.downloadState) {
+        case "starting":
+            return i18n.tr("Starting…");
+        case "downloading":
+            return i18n.tr("Downloading %1%").arg(Math.round(downloadButton.progress * 100));
+        case "processing":
+            return i18n.tr("Finishing up…");
+        case "failed":
+            return i18n.tr("Download failed");
+        }
+        return filePath !== "" ? i18n.tr("Downloaded") : i18n.tr("Ready to download");
     }
 
-    GridLayout {
-        id: gridLayout
-        rows: 3
-        flow: GridLayout.TopToBottom
-        anchors.fill: parent
-
-        ThumbnailImage {
-            id: thumbnailContainer
-            Layout.preferredWidth: units.gu(15)
-            Layout.rowSpan: 3
-            Layout.fillHeight: true
-            Layout.minimumWidth: units.gu(15)
-            Layout.maximumWidth: units.gu(25)
-            
-            thumbnailUrl: gridBox.thumbnail
+    Column {
+        id: content
+        anchors {
+            top: parent.top
+            topMargin: units.gu(1.5)
+            left: parent.left
+            leftMargin: units.gu(2)
+            right: parent.right
+            rightMargin: units.gu(2)
         }
+        spacing: units.gu(1.25)
 
-        RowLayout {
-            Label {
-                id: titleBox
-                color: theme.palette.normal.backgroundText
-                elide: Label.ElideRight
-                Layout.fillWidth: true
-            }
-        }
+        Row {
+            width: parent.width
+            spacing: units.gu(1.5)
 
-        RowLayout {
-            Layout.fillWidth: true
+            ThumbnailImage {
+                id: thumbnailContainer
+                width: units.gu(14)
+                height: units.gu(8)
+                thumbnailUrl: mediaItem.thumbnail
 
-            CustomProgressBar {
-                id: videoProgressBar
-                Layout.fillWidth: true
-            }
-            
-            Label {
-                text: Math.round(videoProgressBar.value * 100) + "%"
-                color: theme.palette.normal.backgroundText
-            }
-        }
+                Rectangle {
+                    anchors {
+                        right: parent.right
+                        bottom: parent.bottom
+                        margins: units.gu(0.5)
+                    }
+                    visible: mediaItem.duration !== "" && mediaItem.duration !== "00:00"
+                    width: durationLabel.width + units.gu(1)
+                    height: durationLabel.height + units.gu(0.25)
+                    radius: units.dp(3)
+                    color: "#b0000000"
 
-        RowLayout {
-            Layout.fillWidth: true
-
-            CustomComboPopup {
-                id: audioPopup
-                Layout.fillWidth: true
-                Layout.minimumWidth: units.gu(8)
-                heading: comboHeading[0]
-                enabled: !downloadUnavailable
-                multipleModel: true
-                dropdownModel: audioExts
-                dropdownModel2: acodec
-                dropdownModel3: audioBitrate
-                
-                onIndexChanged: {
-                    if (acodec && index >= 0 && index < acodec.length) {
-                        updateCodecSelection(false, acodec[index]);
+                    Label {
+                        id: durationLabel
+                        anchors.centerIn: parent
+                        text: mediaItem.duration
+                        textSize: Label.XSmall
+                        color: "white"
                     }
                 }
             }
+
+            Column {
+                width: parent.width - thumbnailContainer.width - parent.spacing
+                spacing: units.gu(0.5)
+
+                Label {
+                    id: titleBox
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                }
+
+                Label {
+                    width: parent.width
+                    elide: Text.ElideRight
+                    textSize: Label.Small
+                    text: mediaItem.statusText()
+                    color: downloadButton.downloadState === "failed"
+                           ? theme.palette.normal.negative
+                           : theme.palette.normal.backgroundSecondaryText
+                }
+            }
+        }
+
+        ProgressBar {
+            width: parent.width
+            height: units.dp(3)
+            visible: downloadButton.active
+            showProgressPercentage: false
+            indeterminate: downloadButton.downloadState !== "downloading"
+            value: downloadButton.progress
+        }
+
+        GridLayout {
+            width: parent.width
+            // On narrow phones the button moves below, so format names stay readable.
+            columns: width < units.gu(38) ? 2 : 3
+            columnSpacing: units.gu(1)
+            rowSpacing: units.gu(1)
 
             CustomComboPopup {
                 id: resolutionPopup
                 Layout.fillWidth: true
-                Layout.minimumWidth: units.gu(8)
-                heading: comboHeading[2]
-                enabled: !downloadUnavailable
-                multipleModel: true
-                dropdownModel: resolutionModel
-                dropdownModel2: videoExts
-                dropdownModel3: vcodec
-                
-                onIndexChanged: {
-                    if (vcodec && index >= 0 && index < vcodec.length) {
-                        updateCodecSelection(true, vcodec[index]);
-                    }
-                }
+                Layout.minimumWidth: 0
+                Layout.preferredWidth: units.gu(10)
+                visible: mediaItem.hasVideoFormats
+                enabled: !downloadButton.active
+                heading: i18n.tr("Video quality")
+                labels: mediaItem.videoLabels()
+                details: mediaItem.videoDetails()
+                onActivated: mediaItem.formatChosen()
+            }
+
+            CustomComboPopup {
+                id: audioPopup
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                Layout.preferredWidth: units.gu(10)
+                visible: mediaItem.hasAudioFormats
+                enabled: !downloadButton.active
+                heading: i18n.tr("Audio quality")
+                labels: mediaItem.audioLabels()
+                details: mediaItem.audioDetails()
+                onActivated: mediaItem.formatChosen()
             }
 
             DownloadButton {
                 id: downloadButton
-                enabled: !downloadUnavailable
-                pythonInstance: gridBox.pythonInstance
-                videoUrl: gridBox.videoLink
-                formatData: gridBox.getFormats()
-                progressBar: videoProgressBar
-                loadingOverlay: itemLoadingOverlay
+                objectName: "downloadButton"
+                Layout.preferredWidth: units.gu(11)
+                Layout.columnSpan: parent.columns === 2 ? 2 : 1
+                Layout.fillWidth: parent.columns === 2 || (!mediaItem.hasVideoFormats && !mediaItem.hasAudioFormats)
+                pythonInstance: mediaItem.pythonInstance
+                videoUrl: mediaItem.videoLink
+                optionsProvider: function() { return mediaItem.getFormats(); }
                 dialogs: mediaDialogs
-                
-                onDownloadStarted: {
-                    gridBox.saveEntryMetadata();
-                }
-                
-                onDownloadFinished: {
-                    gridBox.saveEntryMetadata();
-                }
+
+                onActiveChanged: downloadManager.activeDownloads += active ? 1 : -1
+                onDownloadStarted: mediaItem.saveEntryMetadata()
+                onDownloadFinished: mediaItem.saveEntryMetadata()
+                onDownloadError: mediaItem.saveEntryMetadata()
+                onSaveRequested: root.openContentHubExport(filePath)
             }
         }
+    }
+
+    MediaItemDialogs {
+        id: mediaDialogs
     }
 }

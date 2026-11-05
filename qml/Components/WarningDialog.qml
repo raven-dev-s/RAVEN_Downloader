@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022  RAVEN Developers Ltd.
+ * Copyright (C) 2022  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@ import Lomiri.Components.Popups 1.3
 Dialog {
     id: dialogue
     
-    Keys.onPressed: PopupUtils.close(dialogue)
+    Keys.onEscapePressed: PopupUtils.close(dialogue)
     
     Button {
         text: i18n.tr("OK")

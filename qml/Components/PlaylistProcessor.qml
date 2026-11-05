@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025  RAVEN Developers Ltd.
+ * Copyright (C) 2025  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@ Item {
     property string playlistTitle: ""
     property int totalVideos: 0
     property int processedVideos: 0
+    property int addedVideos: 0
     property bool isProcessing: false
     
     property var _currentEntries: []
@@ -46,6 +47,7 @@ Item {
         playlistTitle = playlistData.title || "Unknown Playlist";
         totalVideos = playlistData.video_count || playlistData.entries.length;
         processedVideos = 0;
+        addedVideos = 0;
         isProcessing = true;
         
         _currentEntries = playlistData.entries;
@@ -60,6 +62,10 @@ Item {
      * Process next video in queue
      */
     function _processNext() {
+        if (!isProcessing) {
+            return;
+        }
+        
         if (_currentIndex >= _currentEntries.length) {
             _onComplete();
             return;
@@ -71,7 +77,13 @@ Item {
         processedVideos = _currentIndex + 1;
         
         pythonInstance.call('download_manager.action_submit', [videoUrl, 0], function(result) {
+            // Stopped while this video was being looked up.
+            if (!isProcessing) {
+                return;
+            }
+            
             if (result && result.type === 'video') {
+                addedVideos++;
                 if (onVideoFormatsReady) {
                     onVideoFormatsReady(result.data);
                 }
@@ -94,7 +106,7 @@ Item {
         isProcessing = false;
         
         if (onProcessingComplete) {
-            onProcessingComplete(playlistTitle, totalVideos);
+            onProcessingComplete(playlistTitle, addedVideos, totalVideos);
         }
     }
     

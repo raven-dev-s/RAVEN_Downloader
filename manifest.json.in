@@ -10,6 +10,6 @@
         }
     },
     "version": "@BUILD_VERSION@",
-    "maintainer": "RAVEN Developers Ltd. <HackerShohag@outlook.com>",
+    "maintainer": "RAVEN Devs <support@raven-dev.tech>",
     "framework" : "@CLICK_FRAMEWORK@"
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025  RAVEN Developers Ltd.
+ * Copyright (C) 2025  RAVEN Devs
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,14 +13,34 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 import QtQuick 2.7
-import QtQuick.Layouts 1.3
 import Lomiri.Components 1.3
 
-Label {
-    Layout.fillWidth: true
-    Layout.topMargin: units.gu(1)
-    wrapMode: Text.WordWrap
-    font.bold: true
+/**
+ * Heading above a group of list rows.
+ */
+Item {
+    property alias text: label.text
+
+    anchors {
+        left: parent.left
+        right: parent.right
+    }
+    height: label.height + units.gu(3)
+
+    Label {
+        id: label
+        anchors {
+            left: parent.left
+            right: parent.right
+            bottom: parent.bottom
+            leftMargin: units.gu(2)
+            rightMargin: units.gu(2)
+            bottomMargin: units.gu(0.75)
+        }
+        wrapMode: Text.WordWrap
+        textSize: Label.Small
+        font.weight: Font.Medium
+        color: theme.palette.normal.backgroundSecondaryText
+    }
 }

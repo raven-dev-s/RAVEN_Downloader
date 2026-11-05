@@ -2,12 +2,14 @@ clickable_minimum_required: 8.0.0
 builder: cmake
 kill: qmlscene
 
+# Local builds default to Ubuntu Touch 24.04. For Ubuntu Touch 20.04, set
+# CLICKABLE_FRAMEWORK=ubuntu-sdk-20.04. CI builds and publishes both.
 framework: ubuntu-touch-24.04-1.x
 
 image_setup:
   run:
     - apt update
-    - apt install -y python3-pip build-essential yasm nasm pkg-config
+    - apt install -y python3-pip build-essential yasm nasm pkg-config wget file xz-utils ca-certificates
 
 # Keep the commands in a file. In container mode Clickable wraps inline
 # commands in `bash -c "..."`, which truncates an inline script containing

@@ -5,12 +5,16 @@ on:
   # competing scheduled workflows than the top of the hour.
   schedule:
     - cron: "23 04 1 * *"
-  # Run CI on changes merged to main and preserve tag-based releases.
+  # Run CI on changes merged to main and preserve tag-based releases. Changes
+  # to documentation alone do not make a new release for users.
   push:
     branches:
       - main
     tags:
       - "v*"
+    paths-ignore:
+      - "**.md"
+      - LICENSE
   workflow_dispatch:
     inputs:
       publish:
@@ -22,38 +26,60 @@ on:
 permissions:
   contents: read
 
-# Do not overlap OpenStore submissions. Each run publishes all architectures
-# under the same generated version.
+# Do not overlap OpenStore submissions. Each run publishes every architecture
+# for both Ubuntu Touch 20.04 and 24.04.
 concurrency:
   group: openstore-publish
   cancel-in-progress: false
 
 jobs:
+  # GitHub disables schedules after 60 days without repository activity, and
+  # monthly releases make no commits. Re-enabling restarts that period.
+  keep-schedule-active:
+    name: Keep monthly schedule active
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Re-enable this workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/openstore-monthly.yml/enable"
+
   version:
     name: Generate package version
     runs-on: ubuntu-latest
     outputs:
-      value: ${{ steps.version.outputs.value }}
+      base: ${{ steps.version.outputs.base }}
+      suffix: ${{ steps.version.outputs.suffix }}
     steps:
       - uses: actions/checkout@v5
 
+      # OpenStore keeps all releases since 20.04 in one channel and gives each
+      # device the newest package for its framework. It rejects one version
+      # number for two frameworks, so every package version names its series:
+      # <base>.<series>[.<timestamp>], for example 4.3.0.2404.20261201042300.
+      # 2404 sorts above 2004, which keeps 24.04 the default outside of devices.
       - id: version
         name: Choose release version
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            version="${GITHUB_REF_NAME#v}"
+            base="${GITHUB_REF_NAME#v}"
+            suffix=""
           else
-            base_version="$(sed -n 's/^set(PROJECT_VERSION "\([^"]*\)")/\1/p' CMakeLists.txt)"
-            test -n "${base_version}"
-            version="${base_version}.$(date -u +%Y%m%d%H%M%S)"
+            base="$(sed -n 's/^set(PROJECT_VERSION "\([^"]*\)")/\1/p' CMakeLists.txt)"
+            test -n "${base}"
+            suffix=".$(date -u +%Y%m%d%H%M%S)"
           fi
-          echo "value=${version}" >> "${GITHUB_OUTPUT}"
-          echo "Building version ${version}"
+          echo "base=${base}" >> "${GITHUB_OUTPUT}"
+          echo "suffix=${suffix}" >> "${GITHUB_OUTPUT}"
+          echo "Building version ${base}.<series>${suffix}"
 
   build:
-    name: Build (${{ matrix.arch }})
+    name: Build (${{ matrix.series }} ${{ matrix.arch }})
     needs: version
     runs-on: ubuntu-latest
     container:
@@ -63,16 +89,38 @@ jobs:
       matrix:
         include:
           - arch: arm64
+            series: "2404"
+            framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-arm64:8
             build_dir: build/aarch64-linux-gnu/app
           - arch: amd64
+            series: "2404"
+            framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-amd64:8
             build_dir: build/x86_64-linux-gnu/app
           - arch: armhf
+            series: "2404"
+            framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-armhf:8
             build_dir: build/arm-linux-gnueabihf/app
+          - arch: arm64
+            series: "2004"
+            framework: ubuntu-sdk-20.04
+            image: clickable/ci-dev-20.04-arm64:8
+            build_dir: build/aarch64-linux-gnu/app
+          - arch: amd64
+            series: "2004"
+            framework: ubuntu-sdk-20.04
+            image: clickable/ci-dev-20.04-amd64:8
+            build_dir: build/x86_64-linux-gnu/app
+          - arch: armhf
+            series: "2004"
+            framework: ubuntu-sdk-20.04
+            image: clickable/ci-dev-20.04-armhf:8
+            build_dir: build/arm-linux-gnueabihf/app
     env:
-      BUILD_VERSION: ${{ needs.version.outputs.value }}
+      BUILD_VERSION: ${{ needs.version.outputs.base }}.${{ matrix.series }}${{ needs.version.outputs.suffix }}
+      CLICKABLE_FRAMEWORK: ${{ matrix.framework }}
       # A scheduled release must resolve the current yt-dlp release rather
       # than a package cached in a prior container layer.
       PIP_NO_CACHE_DIR: "1"
@@ -91,13 +139,13 @@ jobs:
       - name: Upload Click package
         uses: actions/upload-artifact@v6
         with:
-          name: raven-downloader-${{ matrix.arch }}
+          name: raven-downloader-${{ matrix.series }}-${{ matrix.arch }}
           path: ${{ matrix.build_dir }}/*.click
           if-no-files-found: error
           retention-days: 31
 
   publish:
-    name: Publish (${{ matrix.arch }})
+    name: Publish (${{ matrix.series }} ${{ matrix.arch }})
     needs:
       - version
       - build
@@ -115,29 +163,52 @@ jobs:
     strategy:
       fail-fast: false
       # Each upload updates the same OpenStore app record. Submit one
-      # architecture at a time to avoid concurrent app updates.
+      # package at a time to avoid concurrent app updates. The record takes its
+      # details from the latest upload, so the current series goes last.
       max-parallel: 1
       matrix:
         include:
           - arch: arm64
+            series: "2004"
+            framework: ubuntu-sdk-20.04
+            image: clickable/ci-dev-20.04-arm64:8
+            build_dir: build/aarch64-linux-gnu/app
+          - arch: amd64
+            series: "2004"
+            framework: ubuntu-sdk-20.04
+            image: clickable/ci-dev-20.04-amd64:8
+            build_dir: build/x86_64-linux-gnu/app
+          - arch: armhf
+            series: "2004"
+            framework: ubuntu-sdk-20.04
+            image: clickable/ci-dev-20.04-armhf:8
+            build_dir: build/arm-linux-gnueabihf/app
+          - arch: arm64
+            series: "2404"
+            framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-arm64:8
             build_dir: build/aarch64-linux-gnu/app
           - arch: amd64
+            series: "2404"
+            framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-amd64:8
             build_dir: build/x86_64-linux-gnu/app
           - arch: armhf
+            series: "2404"
+            framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-armhf:8
             build_dir: build/arm-linux-gnueabihf/app
     env:
       OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
-      BUILD_VERSION: ${{ needs.version.outputs.value }}
+      BUILD_VERSION: ${{ needs.version.outputs.base }}.${{ matrix.series }}${{ needs.version.outputs.suffix }}
+      CLICKABLE_FRAMEWORK: ${{ matrix.framework }}
     steps:
       - uses: actions/checkout@v5
 
       - name: Download Click package
         uses: actions/download-artifact@v7
         with:
-          name: raven-downloader-${{ matrix.arch }}
+          name: raven-downloader-${{ matrix.series }}-${{ matrix.arch }}
           path: ${{ matrix.build_dir }}
 
       - name: Show Click package
@@ -169,8 +240,17 @@ jobs:
           test -n "${OPENSTORE_API_KEY}"
           publish_log="$(mktemp)"
           trap 'rm -f "$publish_log"' EXIT
+          # OpenStore adds the changelog of every upload to the app's changelog.
+          # Write the note for one package of the release, not all six.
+          changelog=()
+          if [[ "${{ matrix.series }}-${{ matrix.arch }}" == "2404-arm64" ]]; then
+            case "${GITHUB_EVENT_NAME}" in
+              schedule) changelog=(-- "Monthly build with the latest yt-dlp release.") ;;
+              *) changelog=(-- "Version ${{ needs.version.outputs.base }} for Ubuntu Touch 20.04 and 24.04, with the latest yt-dlp release.") ;;
+            esac
+          fi
           for attempt in 1 2 3 4 5; do
-            if clickable publish --arch "${{ matrix.arch }}" --timeout 600 -- "Automated monthly build ${BUILD_VERSION} with the latest yt-dlp release." 2>&1 | tee "$publish_log"; then
+            if clickable publish --arch "${{ matrix.arch }}" --timeout 600 "${changelog[@]}" 2>&1 | tee "$publish_log"; then
               break
             else
               status=$?
