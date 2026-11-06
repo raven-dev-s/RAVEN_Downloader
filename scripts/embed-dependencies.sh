@@ -13,10 +13,29 @@ target_dir="$INSTALL_DIR"
 ffmpeg_bin_dir="$target_dir/lib/$ARCH_TRIPLET/bin"
 ffmpeg_lib_dir="$target_dir/lib/$ARCH_TRIPLET"
 ffmpeg_version="8.0.1"
+# From the release on ffmpeg.org; the build stops if a download does not match.
+ffmpeg_sha256="05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41"
 ffmpeg_archive="/tmp/ffmpeg-${ffmpeg_version}.tar.xz"
 ffmpeg_build_dir="/tmp/ffmpeg-build"
 
 mkdir -p "$ffmpeg_bin_dir" "$ffmpeg_lib_dir"
+
+# Download a file and check it against a known SHA-256. Every attempt starts
+# from scratch: wget -O writes each of its own retries into the same file, so
+# one dropped connection could otherwise leave a corrupted archive behind.
+fetch_verified() {
+  local url="$1" file="$2" sha="$3" attempt
+  for attempt in 1 2 3 4 5; do
+    rm -f "$file"
+    if wget -q --tries=1 --timeout=60 -O "$file" "$url" \
+        && echo "$sha  $file" | sha256sum -c --quiet -; then
+      return 0
+    fi
+    echo "Download of $url failed (attempt $attempt of 5)" >&2
+    sleep "$((attempt * 5))"
+  done
+  return 1
+}
 
 # Standalone CPython for targets whose system Python yt-dlp no longer supports.
 # Pinned with checksums from the python-build-standalone release, because this
@@ -38,9 +57,9 @@ fetch_runtime() {
   local triple="$1" destination="$2" archive sha
   archive="/tmp/$(runtime_tarball "$triple")"
   sha="$(runtime_sha256 "$triple")"
-  wget -q --tries=5 --timeout=60 -O "$archive" \
-    "https://github.com/astral-sh/python-build-standalone/releases/download/${runtime_release}/$(runtime_tarball "$triple" | sed 's/+/%2B/')"
-  echo "$sha  $archive" | sha256sum -c -
+  fetch_verified \
+    "https://github.com/astral-sh/python-build-standalone/releases/download/${runtime_release}/$(runtime_tarball "$triple" | sed 's/+/%2B/')" \
+    "$archive" "$sha"
   rm -rf "$destination"
   mkdir -p "$destination"
   tar --no-same-owner -xzf "$archive" -C "$destination" --strip-components=1
@@ -153,7 +172,7 @@ case "$ARCH" in
 esac
 
 echo "Downloading and compiling ffmpeg ${ffmpeg_version} for ${ARCH}"
-wget -q -O "$ffmpeg_archive" "https://ffmpeg.org/releases/ffmpeg-${ffmpeg_version}.tar.xz"
+fetch_verified "https://ffmpeg.org/releases/ffmpeg-${ffmpeg_version}.tar.xz" "$ffmpeg_archive" "$ffmpeg_sha256"
 rm -rf "$ffmpeg_build_dir"
 mkdir -p "$ffmpeg_build_dir"
 tar --no-same-owner -xJf "$ffmpeg_archive" -C "$ffmpeg_build_dir" --strip-components=1
