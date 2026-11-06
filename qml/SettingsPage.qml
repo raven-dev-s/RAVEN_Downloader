@@ -73,6 +73,32 @@ Page {
             }
 
             SectionLabel {
+                text: i18n.tr("Saving")
+            }
+
+            SettingsCheckbox {
+                labelText: i18n.tr("Ask where to save each download")
+                descriptionText: i18n.tr("Every download is kept in the Library. Turn this on to also send each one to an app such as Music, as soon as it finishes.")
+                checked: settings.askWhereToSave
+                onToggled: settings.askWhereToSave = checked
+            }
+
+            ListItem {
+                width: parent.width
+                height: libraryLayout.height + divider.height
+                onClicked: root.openLibrary()
+
+                ListItemLayout {
+                    id: libraryLayout
+                    title.text: i18n.tr("Open the Library")
+                    subtitle.text: i18n.tr("Also by swiping up from the bottom edge")
+                    subtitle.wrapMode: Text.WordWrap
+
+                    ProgressionSlot {}
+                }
+            }
+
+            SectionLabel {
                 text: i18n.tr("Subtitles")
             }
 
@@ -150,7 +176,7 @@ Page {
                     title.color: enabled ? theme.palette.normal.negative : theme.palette.disabled.backgroundText
                     subtitle.text: settingsPageRoot.activeDownloads > 0
                                    ? i18n.tr("Available when downloads have finished")
-                                   : i18n.tr("Removes the list and files you have not saved")
+                                   : i18n.tr("Empties the list. Files in the Library stay.")
 
                     Icon {
                         SlotsLayout.position: SlotsLayout.Trailing
@@ -170,7 +196,7 @@ Page {
         Dialog {
             id: clearDialog
             title: i18n.tr("Clear all history?")
-            text: i18n.tr("This removes the whole list and any downloaded files you have not saved elsewhere. It cannot be undone.")
+            text: i18n.tr("This empties the list of videos. Your downloaded files stay in the Library.")
 
             Button {
                 text: i18n.tr("Clear")

@@ -38,12 +38,15 @@ def emit(event, **fields):
 
 
 def progress_hook(data):
+    info = data.get('info_dict') or {}
     emit('progress', data={
         'status': data.get('status'),
         'downloaded_bytes': data.get('downloaded_bytes'),
         'total_bytes': data.get('total_bytes'),
         'total_bytes_estimate': data.get('total_bytes_estimate'),
         'filename': data.get('filename'),
+        # Identifies the stream, to combine the progress of video and audio.
+        'info_dict': {'format_id': info.get('format_id')},
     })
 
 

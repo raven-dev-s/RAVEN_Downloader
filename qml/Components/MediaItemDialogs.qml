@@ -28,36 +28,6 @@ QtObject {
     id: dialogRoot
     
     /**
-     * Dialog shown when download completes successfully
-     * Provides option to export file via ContentHub
-     */
-    readonly property Component downloadFinishedDialog: Component {
-        Dialog {
-            id: finishedDialog
-            property string fileName: ""
-            property string filePath: ""
-            title: i18n.tr("Download complete")
-            text: i18n.tr("Save \"%1\" to an app to keep it. You can also do this later from the list.").arg(fileName)
-            
-            Button {
-                text: i18n.tr("Save to…")
-                color: theme.palette.normal.positive
-                onClicked: {
-                    PopupUtils.close(finishedDialog);
-                    if (root && root.openContentHubExport) {
-                        root.openContentHubExport(filePath);
-                    }
-                }
-            }
-            
-            Button {
-                text: i18n.tr("Later")
-                onClicked: PopupUtils.close(finishedDialog)
-            }
-        }
-    }
-    
-    /**
      * Dialog shown when download fails
      * Displays error message from backend
      */

@@ -32,12 +32,16 @@ Button {
     // Path of the finished file. An empty path means nothing is downloaded.
     property string filePath: ""
 
-    // One of: idle, starting, downloading, processing, failed
+    // One of: idle, starting, downloading, processing, retrying, failed
     property string downloadState: "idle"
     property real progress: 0
+    // While retrying: the attempt in progress, and how many there are at most.
+    property int attempt: 0
+    property int attempts: 0
     readonly property bool active: downloadState === "starting"
                                    || downloadState === "downloading"
                                    || downloadState === "processing"
+                                   || downloadState === "retrying"
     readonly property bool hasFile: filePath !== "" && !active
 
     property int pollDownloadId: -1
@@ -48,8 +52,8 @@ Button {
     signal downloadError(string error)
     signal saveRequested(string filePath)
 
-    text: active ? "" : (hasFile ? i18n.tr("Save") : i18n.tr("Download"))
-    color: hasFile ? theme.palette.normal.positive : theme.palette.normal.foreground
+    text: active ? "" : (hasFile ? i18n.tr("Save as…") : i18n.tr("Download"))
+    color: theme.palette.normal.foreground
     enabled: !active
 
     onClicked: {
@@ -60,7 +64,7 @@ Button {
         }
     }
 
-    // quiet downloads report through the list only, without a dialog at the end.
+    // Quiet downloads, started automatically, never open anything when done.
     function start(options, isQuiet) {
         if (!pythonInstance || !videoUrl || !options || active) {
             console.error('[DownloadButton] Missing required properties');
@@ -91,14 +95,20 @@ Button {
     }
 
     function handleDownloadStatus(status) {
+        // Progress covers video and audio together and only grows, also across
+        // retries, which continue where the connection dropped.
         if (status.progress !== undefined) {
-            progress = status.progress / 100.0;
+            progress = Math.max(progress, status.progress / 100.0);
         }
 
         if (status.status === 'finished') {
             handleFinished(status);
         } else if (status.status === 'error') {
             handleError(status);
+        } else if (status.status === 'retrying') {
+            attempt = status.attempt;
+            attempts = status.attempts;
+            downloadState = "retrying";
         } else if (status.status === 'processing' || status.status === 'downloading') {
             downloadState = status.status;
         }
@@ -115,13 +125,6 @@ Button {
             fileName = fileName.substring(fileName.lastIndexOf('/') + 1);
         }
 
-        if (!quiet && dialogs && dialogs.downloadFinishedDialog) {
-            PopupUtils.open(dialogs.downloadFinishedDialog, downloadButton, {
-                fileName: fileName,
-                filePath: filePath
-            });
-        }
-
         downloadFinished(filePath, fileName);
     }
 
@@ -130,7 +133,9 @@ Button {
         progress = 0;
         downloadState = "failed";
 
-        var errorMsg = status.error || i18n.tr("An error occurred while starting the download.");
+        var errorMsg = status.transient
+                ? i18n.tr("The connection kept dropping, even after several tries. Check that you are online, then tap Download again.")
+                : (status.error || i18n.tr("An error occurred while starting the download."));
         if (dialogs && dialogs.downloadErrorDialog) {
             PopupUtils.open(dialogs.downloadErrorDialog, downloadButton, {
                 errorMessage: errorMsg

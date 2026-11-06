@@ -18,7 +18,9 @@ Runs on **Ubuntu Touch 20.04 and 24.04** (arm64, armhf, and amd64). OpenStore gi
 - **Smart Playlist Handling** — Batch downloads with per-video format customization (platform-dependent)
 - **Pull-to-Refresh History** — Swipe down on download history to reload entries from storage
 - **History Control** — Delete single entries, or clear everything after a confirmation
-- **Native ContentHub** — Seamless file export to any Ubuntu Touch app
+- **Library** — Every download is kept automatically; swipe up from the bottom edge to see, share, or delete files
+- **Native ContentHub** — "Save as…" sends any file to Music, Videos, or another app
+- **Resilient Downloads** — One progress figure for video and audio together, with automatic retries when the connection drops
 - **Subtitle Engine** — Download, auto-caption, and embed subtitles in multiple languages
 - **Entry-Based Storage** — Persistent history with dedicated directories and thumbnail caching
 - **Adaptive Theming** — Ambiance and Suru Dark theme support
@@ -64,13 +66,17 @@ clickable desktop --no-nvidia
 **Single Video Download**
 1. Paste the link (e.g., `https://youtube.com/watch?v=VIDEO_ID`) into the bar at the top
 2. Fetch → Choose video and audio quality (the best ones are preselected), or "Audio only" in the video list
-3. Download → Save to an app via ContentHub, right away or later from the list
+3. Download → The file is kept in the Library; tap "Save as…" to send it to Music, Videos, or another app
 
 **Playlist Download** (YouTube, Vimeo, Dailymotion, etc.)
 1. Choose "Playlist" in the bar at the top
 2. Paste the playlist link (e.g., `https://youtube.com/playlist?list=PLAYLIST_ID`)
 3. Fetch → Watch the videos being added, and stop at any point
 4. Choose formats and download each video individually
+
+**Library** (swipe up from the bottom edge)
+- Every finished download, newest first
+- Tap a file to save it to another app; swipe to delete it
 
 **Settings** (gear icon in the header)
 - Enable subtitle downloads (embedded or separate)
@@ -80,12 +86,21 @@ clickable desktop --no-nvidia
 
 **History Management**
 - Pull down on the download list to refresh from storage
-- Swipe a list item to delete it together with its downloaded file
-- Settings → Clear all history removes the whole list and unsaved downloaded files
+- Swipe a list item to remove it from the list; its file stays in the Library
+- Settings → Clear all history empties the list; the Library keeps its files
 
 ---
 
 ## Recent Updates
+
+### Version 4.3.1 — November 2026
+
+- **Library** — Downloads are kept automatically and listed at the bottom edge; "Save as…" sends a file anywhere else, and Settings can ask after each download
+- **Smoother downloads** — One combined progress figure for video and audio, and automatic retries that continue where the connection dropped
+- **Clearer link field** — An outlined field that has focus when the app opens
+- **Audio only first** — At the top of each video's quality list
+- **Smaller packages** — The 20.04 runtime no longer ships the Python interpreter twice, and Python modules ship as compressed archives
+- **Cleaner versions** — Releases use the plain version, such as 4.3.1; monthly builds add the date, such as 4.3.1-261201
 
 ### Version 4.3.0 — November 2026
 
@@ -150,6 +165,7 @@ qml/
 ├── MainPage.qml              — Main UI, download list, pull-to-refresh
 ├── SettingsPage.qml          — Configuration, theme selection, history clearing
 ├── AboutPage.qml             — Version, support, project links
+├── LibraryPage.qml           — Downloaded files, at the bottom edge
 └── Components/
     ├── UrlBar.qml            — Link entry docked in the page header
     ├── DownloadItemManager.qml — History management with reload support
@@ -229,10 +245,12 @@ Dependencies are bundled by `scripts/embed-dependencies.sh` during the build:
 
 | Target | System Python | yt-dlp location | How it runs |
 |--------|---------------|-----------------|-------------|
-| Ubuntu Touch 24.04 | 3.12 | `lib/python3/dist-packages/` | Inside the app, through PyOtherSide |
+| Ubuntu Touch 24.04 | 3.12 | `lib/python3/yt_dlp.zip` | Inside the app, through PyOtherSide |
 | Ubuntu Touch 20.04 | 3.8 | `lib/<target-triplet>/ytdlp-runtime/` | On a bundled Python, as a child process (`src/ytdlp_bridge.py`) |
 
-yt-dlp requires Python 3.11 or newer, and its last release for Python 3.8 dates from October 2024. PyOtherSide ties the app itself to the system Python, so 20.04 packages bundle a standalone Python for yt-dlp. They are about 25 MB larger as a result. Any target whose system Python falls behind yt-dlp's requirement switches to this approach automatically.
+Python modules ship as zip archives of bytecode (`scripts/pack-python.py`): yt-dlp is about 1,800 small modules, which take a fraction of the space this way, and Python imports them directly.
+
+yt-dlp requires Python 3.11 or newer, and its last release for Python 3.8 dates from October 2024. PyOtherSide ties the app itself to the system Python, so 20.04 packages bundle a standalone Python for yt-dlp, trimmed to what yt-dlp needs. Any target whose system Python falls behind yt-dlp's requirement switches to this approach automatically.
 
 ### Automated OpenStore Releases
 
@@ -240,11 +258,19 @@ GitHub Actions builds arm64, amd64, and armhf packages for both Ubuntu Touch
 20.04 and 24.04, and publishes them to OpenStore on the first day of every month
 at 04:23 UTC. The build installs the latest stable `yt-dlp` release at build time.
 
-Pushes to `main` publish too, unless they change only Markdown files or the
-license. Package versions have the form `<base>.<series>[.<timestamp>]`, such as
-`4.3.0.2404.20261201042300`, because OpenStore keeps both series in one channel and
-rejects one version number for two frameworks. Keep `PROJECT_VERSION` in
-`CMakeLists.txt` as the base, and only ever raise it.
+Pushes to `main` build every package as a check, and publish when
+`PROJECT_VERSION` in `CMakeLists.txt` is newer than the version on OpenStore.
+Changes to Markdown files or the license alone do not run the workflow.
+
+| Build | Ubuntu Touch 24.04 | Ubuntu Touch 20.04 |
+|-------|--------------------|--------------------|
+| Push to `main` or tag `v4.3.1` | `4.3.1` | `4.3.1~focal` |
+| Monthly or manual run | `4.3.1-261201` | `4.3.1~focal-261201` |
+
+Monthly builds add the build date (`YYMMDD`). OpenStore compares versions the
+way Debian does, so `4.3.1` < `4.3.1-261201` < `4.3.2`, and it rejects one
+version number for two frameworks, hence `~focal` on 20.04 packages. Raise
+`PROJECT_VERSION` for every release with code changes.
 
 Before enabling the workflow, add the OpenStore API key as the
 `OPENSTORE_API_KEY` GitHub Actions secret (repository-level or in the
@@ -333,7 +359,7 @@ clickable desktop --no-nvidia 2>&1 | tee app.log
 | Error | Solution |
 |-------|----------|
 | **yt-dlp not found** | `clickable clean && clickable build` |
-| **Module import error** | Verify `lib/python3/dist-packages` (24.04) or `lib/<target-triplet>/ytdlp-runtime/site-packages` (20.04) contains yt-dlp |
+| **Module import error** | Verify `lib/python3/yt_dlp.zip` (24.04) or `lib/<target-triplet>/ytdlp-runtime/site-packages/yt_dlp.zip` (20.04) exists |
 | **ffmpeg missing** | Check `lib/aarch64-linux-gnu/bin/ffmpeg` (or the matching target triplet) exists |
 | **CMake warnings** | Safe to ignore deprecation warnings (compatibility) |
 

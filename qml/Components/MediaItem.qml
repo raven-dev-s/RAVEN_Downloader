@@ -37,7 +37,9 @@ ListItem {
     property var    videoExts           : []
     property var    videoFormats        : []
     property var    sizeModel           : []
-    property alias  videoIndex          : resolutionPopup.index
+    // Position in videoFormats. videoFormats.length stands for "Audio only",
+    // as saved by version 4.3.0, although the list shows that choice first.
+    property int    videoIndex          : 0
     property string selectedVideoCodec  : ""
 
     property var    acodec              : []
@@ -53,9 +55,7 @@ ListItem {
 
     readonly property bool hasVideoFormats: !!videoFormats && videoFormats.length > 0
     readonly property bool hasAudioFormats: !!audioFormats && audioFormats.length > 0
-    // "Audio only" is listed after the last video format, so that the positions
-    // of real formats stay the same in entries saved by earlier versions.
-    readonly property bool audioOnly: hasVideoFormats && resolutionPopup.index >= videoFormats.length
+    readonly property bool audioOnly: hasVideoFormats && videoIndex >= videoFormats.length
 
     leadingActions: ListItemActions {
         actions: [
@@ -72,35 +72,26 @@ ListItem {
         downloadButton.progress = videoProgress;
         if (downloadManager.consumeAutoStart(videoLink)) {
             var options = getFormats();
-            if (audioOnly) {
-                options["format"] = "bestaudio/best";
-                options["extractAudio"] = true;
-            } else {
-                options["format"] = "bestvideo+bestaudio/best";
-            }
+            options["format"] = audioOnly ? "bestaudio/best" : "bestvideo+bestaudio/best";
+            options["expectedSizes"] = [];
             downloadButton.start(options, true);
         }
     }
 
+    // The video list starts with "Audio only", followed by the video formats.
     function videoLabels() {
-        var labels = [];
+        var labels = [i18n.tr("Audio only")];
         for (var i = 0; i < videoFormats.length; i++) {
             labels.push(Utils.shortResolution(resolutionModel[i]) + " · " + videoExts[i]);
-        }
-        if (labels.length > 0) {
-            labels.push(i18n.tr("Audio only"));
         }
         return labels;
     }
 
     function videoDetails() {
-        var details = [];
+        var details = [i18n.tr("No video, smaller file")];
         for (var i = 0; i < videoFormats.length; i++) {
             var size = Utils.formatBytes(sizeModel[i]);
             details.push((vcodec[i] || "") + (size ? " · " + size : ""));
-        }
-        if (details.length > 0) {
-            details.push(i18n.tr("No video, smaller file"));
         }
         return details;
     }
@@ -180,31 +171,37 @@ ListItem {
     // details at all. Ask for what exists and let yt-dlp pick when nothing does.
     function getFormats() {
         var parts = [];
+        // Expected sizes in the same order, to combine the progress of the streams.
+        var sizes = [];
         if (hasAudioFormats) {
             parts.push(audioFormats[audioPopup.index]);
+            sizes.push(audioSizes[audioPopup.index] || 0);
         }
         if (hasVideoFormats && !audioOnly) {
-            parts.push(videoFormats[resolutionPopup.index]);
+            parts.push(videoFormats[videoIndex]);
+            sizes.push(sizeModel[videoIndex] || 0);
         }
 
         var jsonObject = {
             "format": parts.length > 0 ? parts.join("+") : "best",
+            "expectedSizes": sizes,
             "indexID": indexID
         };
 
         if (audioOnly) {
-            // Some sites have no separate audio stream. Take the audio out of
-            // whatever they offer. Subtitles have nothing to go with either.
+            // Store the audio in its own audio file type, such as .m4a or .opus.
+            // Sites without a separate audio stream get it taken out of the
+            // video. Subtitles have nothing to go with.
+            jsonObject["extractAudio"] = true;
             if (!hasAudioFormats) {
                 jsonObject["format"] = "best";
-                jsonObject["extractAudio"] = true;
             }
             return jsonObject;
         }
 
         if (generalSettings.downloadSubtitle) {
             jsonObject["subtitle"] = true;
-            if (videoExts && videoExts[resolutionPopup.index] == "mp4") {
+            if (videoExts && videoExts[videoIndex] == "mp4") {
                 jsonObject["strConvert"] = true;
             }
             if (generalSettings.embeddedSubtitle) {
@@ -235,10 +232,13 @@ ListItem {
             return i18n.tr("Downloading %1%").arg(Math.round(downloadButton.progress * 100));
         case "processing":
             return i18n.tr("Finishing up…");
+        case "retrying":
+            return i18n.tr("Connection lost, trying again (%1 of %2)…")
+                       .arg(downloadButton.attempt).arg(downloadButton.attempts);
         case "failed":
             return i18n.tr("Download failed");
         }
-        return filePath !== "" ? i18n.tr("Downloaded") : i18n.tr("Ready to download");
+        return filePath !== "" ? i18n.tr("Saved in Library") : i18n.tr("Ready to download");
     }
 
     Column {
@@ -335,7 +335,11 @@ ListItem {
                 heading: i18n.tr("Video quality")
                 labels: mediaItem.videoLabels()
                 details: mediaItem.videoDetails()
-                onActivated: mediaItem.formatChosen()
+                index: mediaItem.audioOnly ? 0 : mediaItem.videoIndex + 1
+                onActivated: {
+                    mediaItem.videoIndex = choice === 0 ? mediaItem.videoFormats.length : choice - 1;
+                    mediaItem.formatChosen();
+                }
             }
 
             CustomComboPopup {
@@ -364,7 +368,13 @@ ListItem {
 
                 onActiveChanged: downloadManager.activeDownloads += active ? 1 : -1
                 onDownloadStarted: mediaItem.saveEntryMetadata()
-                onDownloadFinished: mediaItem.saveEntryMetadata()
+                onDownloadFinished: {
+                    mediaItem.saveEntryMetadata();
+                    downloadManager.libraryChanged();
+                    if (generalSettings.askWhereToSave && !downloadButton.quiet) {
+                        root.openContentHubExport(filePath);
+                    }
+                }
                 onDownloadError: mediaItem.saveEntryMetadata()
                 onSaveRequested: root.openContentHubExport(filePath)
             }
@@ -373,5 +383,15 @@ ListItem {
 
     MediaItemDialogs {
         id: mediaDialogs
+    }
+
+    // A file deleted from the library can no longer be saved from here.
+    Connections {
+        target: downloadManager
+        onFileRemoved: {
+            if (path === mediaItem.filePath) {
+                mediaItem.formatChosen();
+            }
+        }
     }
 }

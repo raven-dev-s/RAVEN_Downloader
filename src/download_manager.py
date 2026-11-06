@@ -16,6 +16,7 @@
 
 import os
 import random
+import shutil
 import sys
 import threading
 import time
@@ -23,9 +24,12 @@ from pathlib import Path
 
 current_dir = Path(__file__).parent.parent
 
-lib_path = current_dir / "lib" / "python3" / "dist-packages"
-if lib_path.exists():
-    sys.path.insert(0, str(lib_path))
+# Builds ship yt-dlp as one zip archive; development setups may have a
+# plain package directory instead.
+for lib_path in (current_dir / "lib" / "python3" / "dist-packages",
+                 current_dir / "lib" / "python3" / "yt_dlp.zip"):
+    if lib_path.exists():
+        sys.path.insert(0, str(lib_path))
 
 # Target-specific executables and shared libraries belong below
 # lib/<multiarch-triplet>.  This is Clickable's runtime layout and lets
@@ -81,6 +85,34 @@ else:
         print(f"[download_manager] ERROR importing yt-dlp: {e}")
         yt_dlp = None
 
+# Connection problems worth another attempt. Everything else, such as a video
+# that is private or removed, fails at once.
+TRANSIENT_ERROR_MARKERS = (
+    'timed out', 'timeout', 'connection', 'network', 'unreachable', 'reset by peer',
+    'temporary failure', 'name resolution', 'incompleteread', 'remote end closed',
+    'eof occurred', 'ssl', 'http error 5', 'http error 429', 'giving up after',
+    'broken pipe',
+)
+
+# How long to wait before each further attempt, in seconds.
+DOWNLOAD_RETRY_DELAYS = (3, 8, 20)
+FETCH_RETRY_DELAYS = (2, 5)
+
+
+def is_transient_error(message):
+    """
+    Tell whether an error message describes a passing connection problem.
+
+    Args:
+        message: Error text from yt-dlp
+
+    Returns:
+        True when trying again may succeed
+    """
+    text = str(message).lower()
+    return any(marker in text for marker in TRANSIENT_ERROR_MARKERS)
+
+
 class DownloadManager:
     """
     Orchestrates video downloads using yt-dlp library.
@@ -118,6 +150,13 @@ class DownloadManager:
             'legacy_server_connect': True,
             'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'cookiesfrombrowser': None,
+            # Mobile connections drop out. Give up on a stalled connection
+            # sooner and let yt-dlp try again instead of waiting.
+            'socket_timeout': 15,
+            'retries': 10,
+            'fragment_retries': 10,
+            'extractor_retries': 3,
+            'file_access_retries': 3,
         }
     
     def action_submit(self, url, download_type=0):
@@ -167,15 +206,21 @@ class DownloadManager:
             ydl_opts = self._get_common_ydl_opts()
             ydl_opts['extract_flat'] = is_playlist
             
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                if is_playlist:
-                    playlist_data = parse_playlist_info(info)
-                    return {'type': 'playlist', 'data': playlist_data}
-                else:
-                    formats_data = parse_video_formats(info)
-                    return {'type': 'video', 'data': formats_data}
+            info = None
+            for attempt, delay in enumerate(FETCH_RETRY_DELAYS + (None,)):
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                    break
+                except Exception as e:
+                    if delay is None or not is_transient_error(e):
+                        raise
+                    print(f"[action_submit] Connection problem, trying again in {delay}s: {e}")
+                    time.sleep(delay)
+            
+            if is_playlist:
+                return {'type': 'playlist', 'data': parse_playlist_info(info)}
+            return {'type': 'video', 'data': parse_video_formats(info)}
                     
         except Exception as e:
             error_msg = str(e)
@@ -196,11 +241,12 @@ class DownloadManager:
             options: Download configuration dictionary:
                 - format: Combined format string (e.g., "137+140")
                 - indexID: Download ID for progress tracking
-                - downloadLocation: Custom download path (optional)
                 - subtitle: Download subtitles flag (optional)
                 - caption: Download captions flag (optional)
                 - embedded: Embed subtitles flag (optional)
                 - extractAudio: Keep only the audio of the download (optional)
+                - expectedSizes: Expected byte size per stream, in the order of
+                  the format string, to weigh their progress (optional)
                 
         Returns:
             Dictionary with success status and download_id for tracking:
@@ -219,7 +265,9 @@ class DownloadManager:
             
             format_selector = options.get('format', 'best')
             
-            output_path = options.get('downloadLocation', self.storage.get_download_path())
+            # Downloads go to the cache first and move to the library once
+            # complete, so the library never holds partial files.
+            output_path = self.storage.get_download_path()
             output_name = '%(title)s.%(ext)s'
             
             download_subtitles = options.get('subtitle', False)
@@ -232,40 +280,65 @@ class DownloadManager:
                 'timestamp': time.time()
             }
             
+            # Video and audio arrive as separate streams, one after the other.
+            # Progress covers all of them together, so it never jumps back.
+            # yt-dlp reports streams one at a time, so the number of streams
+            # comes from the format request ("audio+video") and their expected
+            # sizes, where known, from the caller.
+            stream_count = format_selector.split('/')[0].count('+') + 1
+            expected_sizes = [int(size or 0) for size in options.get('expectedSizes') or []]
+            parts = {}
+            order = []
+            finished_parts = set()
+            shown = {'progress': 0.0}
+            
+            def overall_progress():
+                count = max(stream_count, len(order))
+                # Weigh streams by size when every size is known up front,
+                # otherwise equally. Mixing both would make progress jump.
+                if len(expected_sizes) >= count and all(expected_sizes[:count]):
+                    weights = expected_sizes[:count]
+                else:
+                    weights = [1] * count
+                fractions = []
+                for index in range(count):
+                    done, total = parts.get(order[index], (0, 0)) if index < len(order) else (0, 0)
+                    fractions.append(min(1.0, done / total) if total else 0.0)
+                progress = 100.0 * sum(w * f for w, f in zip(weights, fractions)) / sum(weights)
+                # Size estimates of streams in fragments shift as they arrive.
+                # Never show progress going backwards.
+                shown['progress'] = max(shown['progress'], progress)
+                return shown['progress']
+            
             def progress_hook(d):
-                current_time = time.time()
+                part = str((d.get('info_dict') or {}).get('format_id') or d.get('filename') or 'single')
+                if part not in order:
+                    order.append(part)
                 
                 if d['status'] == 'downloading':
-                    downloaded = d.get('downloaded_bytes', 0)
-                    total = d.get('total_bytes', 0) or d.get('total_bytes_estimate', 0)
-                    
-                    if total > 0:
-                        progress = (downloaded / total) * 100.0
-                        self.last_progress_time[download_id] = {
-                            'progress': progress,
-                            'downloaded': downloaded,
-                            'total': total,
-                            'status': 'downloading',
-                            'timestamp': current_time
-                        }
-                    
+                    downloaded = d.get('downloaded_bytes') or 0
+                    total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                    parts[part] = (downloaded, total)
+                    self.last_progress_time[download_id] = {
+                        'progress': min(99.0, overall_progress()),
+                        'status': 'downloading',
+                        'timestamp': time.time()
+                    }
+                
                 elif d['status'] == 'finished':
+                    size = d.get('total_bytes') or (parts.get(part) or (0, 0))[1] or 1
+                    parts[part] = (size, size)
+                    finished_parts.add(part)
                     filename = d.get('filename', 'Unknown')
                     print(f"[action_download] Stream downloaded: {filename}")
                     
+                    all_done = len(finished_parts) >= stream_count
                     self.last_progress_time[download_id] = {
-                        'progress': 95.0,
-                        'status': 'processing',
+                        'progress': 99.0 if all_done else min(99.0, overall_progress()),
+                        # Once every stream is in, only processing remains.
+                        'status': 'processing' if all_done else 'downloading',
                         'filename': filename,
-                        'timestamp': current_time
-                    }
-                
-                elif d['status'] == 'error':
-                    print(f"[action_download] Download {download_id} error")
-                    self.last_progress_time[download_id] = {
-                        'progress': 0,
-                        'status': 'error',
-                        'timestamp': current_time
+                        'timestamp': time.time()
                     }
             
             def postprocessor_hook(d):
@@ -316,39 +389,52 @@ class DownloadManager:
                 })
             
             def download_thread():
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        ydl.download([video_url])
-                    
-                    if self.last_progress_time[download_id].get('status') == 'processing':
-                        filename = self.last_progress_time[download_id].get('filename', 'Unknown')
+                for attempt, delay in enumerate(DOWNLOAD_RETRY_DELAYS + (None,)):
+                    try:
+                        # A new attempt resumes partial files; keep the
+                        # progress shown so far.
+                        parts.clear()
+                        order.clear()
+                        finished_parts.clear()
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            ydl.download([video_url])
+                        
+                        filename = self.last_progress_time[download_id].get('filename', '')
+                        saved = self.storage.move_to_library(filename)
                         self.last_progress_time[download_id] = {
                             'progress': 100.0,
                             'status': 'finished',
-                            'filename': filename,
+                            'filename': saved,
                             'timestamp': time.time(),
                             'success': True
                         }
+                        return
                         
-                        self.storage.add_download_entry({
-                            'url': video_url,
-                            'filename': os.path.basename(filename),
-                            'path': filename,
+                    except Exception as e:
+                        error_msg = str(e)
+                        print(f"[action_download] Download thread error: {error_msg}")
+                        if delay is not None and is_transient_error(error_msg):
+                            # Partial files stay in the cache, so the next
+                            # attempt continues where this one stopped.
+                            self.last_progress_time[download_id] = {
+                                'progress': self.last_progress_time[download_id].get('progress', 0),
+                                'status': 'retrying',
+                                'attempt': attempt + 2,
+                                'attempts': len(DOWNLOAD_RETRY_DELAYS) + 1,
+                                'timestamp': time.time()
+                            }
+                            time.sleep(delay)
+                            continue
+                        
+                        self.last_progress_time[download_id] = {
+                            'progress': 0,
+                            'status': 'error',
+                            'error': error_msg,
+                            'transient': is_transient_error(error_msg),
                             'timestamp': time.time(),
-                        })
-                    else:
-                        self.last_progress_time[download_id]['success'] = True
-                        
-                except Exception as e:
-                    error_msg = str(e)
-                    print(f"[action_download] Download thread error: {error_msg}")
-                    self.last_progress_time[download_id] = {
-                        'progress': 0,
-                        'status': 'error',
-                        'error': error_msg,
-                        'timestamp': time.time(),
-                        'success': False
-                    }
+                            'success': False
+                        }
+                        return
             
             thread = threading.Thread(target=download_thread, daemon=True)
             thread.start()

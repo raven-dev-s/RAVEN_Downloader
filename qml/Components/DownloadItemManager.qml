@@ -34,6 +34,11 @@ Item {
     // New videos start out with "Audio only" chosen instead of a video quality.
     property bool audioOnlyNewItems: false
     
+    // A download finished, so the library has a new file.
+    signal libraryChanged()
+    // A file was deleted from the library.
+    signal fileRemoved(string path)
+    
     // Download ids stay unique for the session even after entries are deleted.
     property int _nextIndex: 0
     // Links of videos just added that still have to start downloading. History
@@ -128,7 +133,21 @@ Item {
     }
     
     /**
-     * Delete one entry and its downloaded file
+     * Delete a file from the library
+     */
+    function deleteLibraryFile(path, callback) {
+        pythonInstance.call('storage_manager.delete_library_file', [path], function(deleted) {
+            if (deleted) {
+                fileRemoved(path);
+            }
+            if (callback) {
+                callback(deleted);
+            }
+        });
+    }
+    
+    /**
+     * Delete one entry. Its file stays in the library.
      */
     function removeEntry(entryId) {
         for (var i = 0; i < downloadItemsModel.count; i++) {

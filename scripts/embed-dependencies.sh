@@ -8,6 +8,7 @@ echo "=== Installing embedded yt-dlp and ffmpeg ==="
 : "${ARCH:?Clickable must provide ARCH}"
 : "${ARCH_TRIPLET:?Clickable must provide ARCH_TRIPLET}"
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 target_dir="$INSTALL_DIR"
 ffmpeg_bin_dir="$target_dir/lib/$ARCH_TRIPLET/bin"
 ffmpeg_lib_dir="$target_dir/lib/$ARCH_TRIPLET"
@@ -49,17 +50,27 @@ fetch_runtime() {
 # The UI runs yt-dlp inside the system Python through PyOtherSide whenever
 # yt-dlp supports that Python. The build image has the Python of its target
 # system, so its version decides.
+ytdlp_download_dir="/tmp/ytdlp-package"
+rm -rf "$ytdlp_download_dir"
+
 if python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
   echo "Embedding yt-dlp for the system $(python3 --version)"
-  mkdir -p "$target_dir/lib/python3/dist-packages"
   pip3 install \
-    --target="$target_dir/lib/python3/dist-packages" \
-    --upgrade \
+    --target="$ytdlp_download_dir" \
+    --no-compile \
     --no-cache-dir \
     --no-warn-script-location \
     yt-dlp
-  PYTHONPATH="$target_dir/lib/python3/dist-packages" \
+  PYTHONPATH="$ytdlp_download_dir" \
     python3 -c 'import yt_dlp; print("Embedded yt-dlp version: " + yt_dlp.version.__version__)'
+
+  # yt-dlp is about 1,800 small modules. As one zip archive of bytecode it
+  # takes a fraction of the space. The sources stay in the archive, so a later
+  # Python on the device can still run it.
+  mkdir -p "$target_dir/lib/python3"
+  python3 "$script_dir/pack-python.py" "$ytdlp_download_dir/yt_dlp" \
+    "$target_dir/lib/python3/yt_dlp.zip" --prefix yt_dlp --with-source
+  du -h "$target_dir/lib/python3/yt_dlp.zip"
 else
   # The current yt-dlp cannot run on this system Python, and pip would quietly
   # settle for a release that is years old. Bundle a runtime that can run it;
@@ -79,44 +90,50 @@ else
 
   runtime_dir="$ffmpeg_lib_dir/ytdlp-runtime"
   build_python_dir="/tmp/ytdlp-build-python"
+  build_python="$build_python_dir/bin/python3"
+  python_minor="${runtime_python_version%.*}"
+  stdlib_dir="$runtime_dir/lib/python${python_minor}"
 
   # yt-dlp is pure Python, so a Python for the build host can install it for
   # any target, and pip resolves against a version it actually supports.
   fetch_runtime "$build_triple" "$build_python_dir"
   fetch_runtime "$runtime_triple" "$runtime_dir"
 
-  "$build_python_dir/bin/python3" -m pip install \
-    --target="$runtime_dir/site-packages" \
-    --upgrade \
+  "$build_python" -m pip install \
+    --target="$ytdlp_download_dir" \
+    --no-compile \
     --no-cache-dir \
     --no-warn-script-location \
     yt-dlp
-  PYTHONPATH="$runtime_dir/site-packages" \
-    "$build_python_dir/bin/python3" -c 'import yt_dlp; print("Embedded yt-dlp version: " + yt_dlp.version.__version__)'
+  PYTHONPATH="$ytdlp_download_dir" \
+    "$build_python" -c 'import yt_dlp; print("Embedded yt-dlp version: " + yt_dlp.version.__version__)'
 
-  # Drop everything the runtime does not need to run yt-dlp.
-  stdlib_dir="$runtime_dir/lib/python${runtime_python_version%.*}"
+  # Drop everything the runtime does not need to run yt-dlp. bin/python3 has
+  # the interpreter linked in, so the shared libpython beside it goes too.
   rm -rf "$runtime_dir/include" "$runtime_dir/share" "$runtime_dir/lib/pkgconfig" \
+    "$runtime_dir"/lib/libpython3* \
     "$runtime_dir"/lib/itcl* "$runtime_dir"/lib/tcl* "$runtime_dir"/lib/tk* \
     "$runtime_dir"/lib/libtcl* "$runtime_dir"/lib/libtk* "$runtime_dir"/lib/thread* \
     "$stdlib_dir/test" "$stdlib_dir/idlelib" "$stdlib_dir/tkinter" \
     "$stdlib_dir/turtledemo" "$stdlib_dir/ensurepip" "$stdlib_dir/site-packages" \
-    "$stdlib_dir"/config-*
-  find "$runtime_dir/bin" -mindepth 1 \
-    ! -name python3 ! -name "python${runtime_python_version%.*}" -delete
-  # pip's launcher in bin refers to the build host's Python.
-  rm -rf "$runtime_dir/site-packages/bin" "$runtime_dir/site-packages/share"
+    "$stdlib_dir/pydoc_data" "$stdlib_dir"/config-* "$stdlib_dir"/lib-dynload/_tkinter*
+  find "$runtime_dir/bin" -mindepth 1 ! -name python3 ! -name "python${python_minor}" -delete
 
-  # The installed app directory is read-only, so Python could not cache bytecode
-  # at runtime and would recompile yt-dlp on every fetch. Unchecked hashes keep
-  # the bytecode valid whatever modification times the package ends up with.
-  "$build_python_dir/bin/python3" -m compileall -q -j 0 \
-    --invalidation-mode unchecked-hash "$stdlib_dir" "$runtime_dir/site-packages"
+  # The standard library and yt-dlp, each as one zip archive of bytecode.
+  # Python finds lib/pythonXY.zip by itself. os.py stays where it was, as the
+  # landmark from which Python finds its installation.
+  "$build_python" "$script_dir/pack-python.py" "$stdlib_dir" \
+    "$runtime_dir/lib/python${python_minor/./}.zip"
+  find "$stdlib_dir" -mindepth 1 -maxdepth 1 ! -name lib-dynload ! -name os.py -exec rm -rf {} +
+  mkdir -p "$runtime_dir/site-packages"
+  "$build_python" "$script_dir/pack-python.py" "$ytdlp_download_dir/yt_dlp" \
+    "$runtime_dir/site-packages/yt_dlp.zip" --prefix yt_dlp
   rm -rf "$build_python_dir"
 
   file "$(readlink -f "$runtime_dir/bin/python3")"
   du -sh "$runtime_dir"
 fi
+rm -rf "$ytdlp_download_dir"
 
 case "$ARCH" in
   arm64)
@@ -159,10 +176,22 @@ pushd "$ffmpeg_build_dir" >/dev/null
   --disable-static \
   --disable-programs \
   --enable-ffmpeg \
-  --enable-ffprobe
+  --enable-ffprobe \
+  --disable-avdevice \
+  --disable-indevs \
+  --disable-outdevs \
+  --disable-encoders \
+  --enable-encoder=aac,mov_text,srt,subrip,ass,ssa,webvtt \
+  --disable-filters \
+  --enable-filter=null,anull,format,aformat,aresample,copy,acopy,trim,atrim \
+  --disable-protocols \
+  --enable-protocol=file,pipe,concat,crypto,data,subfile,cache,http,tcp,hls,httpproxy
 make -j"$(nproc)"
 make install
 popd >/dev/null
+
+# Headers and build files are for developers, not for the app.
+rm -rf "$target_dir/include" "$target_dir/share/ffmpeg" "$ffmpeg_lib_dir/pkgconfig"
 
 test -x "$ffmpeg_bin_dir/ffmpeg"
 file "$ffmpeg_bin_dir/ffmpeg"

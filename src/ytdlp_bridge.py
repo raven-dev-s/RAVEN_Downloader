@@ -27,6 +27,7 @@ import json
 import os
 import re
 import subprocess
+import zipfile
 from pathlib import Path
 
 RUNTIME_DIR_NAME = 'ytdlp-runtime'
@@ -59,7 +60,10 @@ class Runtime:
 
     def __init__(self, python_path):
         self.python_path = Path(python_path)
-        self.site_packages = self.python_path.parent.parent / 'site-packages'
+        site_packages = self.python_path.parent.parent / 'site-packages'
+        # Builds ship yt-dlp as one zip archive; a plain directory works too.
+        archive = site_packages / 'yt_dlp.zip'
+        self.site_packages = archive if archive.exists() else site_packages
         self.worker_path = Path(__file__).resolve().parent / 'ytdlp_worker.py'
         self.version = _Version(self)
 
@@ -124,8 +128,20 @@ class _Version:
 
     @property
     def __version__(self):
-        version_file = self._runtime.site_packages / 'yt_dlp' / 'version.py'
-        match = re.search(r"^__version__\s*=\s*'([^']+)'", version_file.read_text(encoding='utf-8'), re.M)
+        location = self._runtime.site_packages
+        if zipfile.is_zipfile(str(location)):
+            with zipfile.ZipFile(str(location)) as archive:
+                names = set(archive.namelist())
+                if 'yt_dlp/version.py' in names:
+                    text = archive.read('yt_dlp/version.py').decode('utf-8')
+                else:
+                    # Bytecode only: the version string is among its constants.
+                    text = archive.read('yt_dlp/version.pyc').decode('latin-1')
+                    match = re.search(r"(\d{4}\.\d{2}\.\d{2}(?:\.\d+)?)", text)
+                    return match.group(1) if match else 'unknown'
+        else:
+            text = (location / 'yt_dlp' / 'version.py').read_text(encoding='utf-8')
+        match = re.search(r"^__version__\s*=\s*'([^']+)'", text, re.M)
         return match.group(1) if match else 'unknown'
 
 

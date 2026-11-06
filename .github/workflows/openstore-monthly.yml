@@ -52,15 +52,17 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       base: ${{ steps.version.outputs.base }}
-      suffix: ${{ steps.version.outputs.suffix }}
+      stamp: ${{ steps.version.outputs.stamp }}
     steps:
       - uses: actions/checkout@v5
 
-      # OpenStore keeps all releases since 20.04 in one channel and gives each
-      # device the newest package for its framework. It rejects one version
-      # number for two frameworks, so every package version names its series:
-      # <base>.<series>[.<timestamp>], for example 4.3.0.2404.20261201042300.
-      # 2404 sorts above 2004, which keeps 24.04 the default outside of devices.
+      # Pushes and tags publish the version in CMakeLists.txt, such as 4.3.1.
+      # Monthly and manual builds refresh yt-dlp without code changes, so they
+      # add the build date: 4.3.1-261201. OpenStore orders versions like
+      # Debian, which puts 4.3.1-261201 after 4.3.1 and before 4.3.2.
+      #
+      # OpenStore also rejects one version number for two frameworks, so
+      # Ubuntu Touch 20.04 packages carry "~focal": 4.3.1~focal-261201.
       - id: version
         name: Choose release version
         shell: bash
@@ -68,15 +70,17 @@ jobs:
           set -euo pipefail
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             base="${GITHUB_REF_NAME#v}"
-            suffix=""
           else
             base="$(sed -n 's/^set(PROJECT_VERSION "\([^"]*\)")/\1/p' CMakeLists.txt)"
-            test -n "${base}"
-            suffix=".$(date -u +%Y%m%d%H%M%S)"
           fi
+          test -n "${base}"
+          stamp=""
+          case "${GITHUB_EVENT_NAME}" in
+            schedule|workflow_dispatch) stamp="-$(date -u +%y%m%d)" ;;
+          esac
           echo "base=${base}" >> "${GITHUB_OUTPUT}"
-          echo "suffix=${suffix}" >> "${GITHUB_OUTPUT}"
-          echo "Building version ${base}.<series>${suffix}"
+          echo "stamp=${stamp}" >> "${GITHUB_OUTPUT}"
+          echo "Building version ${base}${stamp} (20.04: ${base}~focal${stamp})"
 
   build:
     name: Build (${{ matrix.series }} ${{ matrix.arch }})
@@ -90,36 +94,42 @@ jobs:
         include:
           - arch: arm64
             series: "2404"
+            version_tag: ""
             framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-arm64:8
             build_dir: build/aarch64-linux-gnu/app
           - arch: amd64
             series: "2404"
+            version_tag: ""
             framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-amd64:8
             build_dir: build/x86_64-linux-gnu/app
           - arch: armhf
             series: "2404"
+            version_tag: ""
             framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-armhf:8
             build_dir: build/arm-linux-gnueabihf/app
           - arch: arm64
             series: "2004"
+            version_tag: "~focal"
             framework: ubuntu-sdk-20.04
             image: clickable/ci-dev-20.04-arm64:8
             build_dir: build/aarch64-linux-gnu/app
           - arch: amd64
             series: "2004"
+            version_tag: "~focal"
             framework: ubuntu-sdk-20.04
             image: clickable/ci-dev-20.04-amd64:8
             build_dir: build/x86_64-linux-gnu/app
           - arch: armhf
             series: "2004"
+            version_tag: "~focal"
             framework: ubuntu-sdk-20.04
             image: clickable/ci-dev-20.04-armhf:8
             build_dir: build/arm-linux-gnueabihf/app
     env:
-      BUILD_VERSION: ${{ needs.version.outputs.base }}.${{ matrix.series }}${{ needs.version.outputs.suffix }}
+      BUILD_VERSION: ${{ needs.version.outputs.base }}${{ matrix.version_tag }}${{ needs.version.outputs.stamp }}
       CLICKABLE_FRAMEWORK: ${{ matrix.framework }}
       # A scheduled release must resolve the current yt-dlp release rather
       # than a package cached in a prior container layer.
@@ -170,37 +180,43 @@ jobs:
         include:
           - arch: arm64
             series: "2004"
+            version_tag: "~focal"
             framework: ubuntu-sdk-20.04
             image: clickable/ci-dev-20.04-arm64:8
             build_dir: build/aarch64-linux-gnu/app
           - arch: amd64
             series: "2004"
+            version_tag: "~focal"
             framework: ubuntu-sdk-20.04
             image: clickable/ci-dev-20.04-amd64:8
             build_dir: build/x86_64-linux-gnu/app
           - arch: armhf
             series: "2004"
+            version_tag: "~focal"
             framework: ubuntu-sdk-20.04
             image: clickable/ci-dev-20.04-armhf:8
             build_dir: build/arm-linux-gnueabihf/app
           - arch: arm64
             series: "2404"
+            version_tag: ""
             framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-arm64:8
             build_dir: build/aarch64-linux-gnu/app
           - arch: amd64
             series: "2404"
+            version_tag: ""
             framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-amd64:8
             build_dir: build/x86_64-linux-gnu/app
           - arch: armhf
             series: "2404"
+            version_tag: ""
             framework: ubuntu-touch-24.04-1.x
             image: clickable/ci-dev-ut24.04-1.x-armhf:8
             build_dir: build/arm-linux-gnueabihf/app
     env:
       OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
-      BUILD_VERSION: ${{ needs.version.outputs.base }}.${{ matrix.series }}${{ needs.version.outputs.suffix }}
+      BUILD_VERSION: ${{ needs.version.outputs.base }}${{ matrix.version_tag }}${{ needs.version.outputs.stamp }}
       CLICKABLE_FRAMEWORK: ${{ matrix.framework }}
     steps:
       - uses: actions/checkout@v5
@@ -238,6 +254,23 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${OPENSTORE_API_KEY}"
+
+          # OpenStore only accepts a version newer than the last one for the
+          # same framework and architecture. Pushes that keep PROJECT_VERSION
+          # still build, as a check, but have nothing new to publish.
+          latest="$(python3 - "${{ matrix.framework }}" "${{ matrix.arch }}" <<'PY' || true
+          import json, sys, urllib.request
+          app = json.load(urllib.request.urlopen(
+              "https://open-store.io/api/v4/apps/raven.downloader.shohag", timeout=60))["data"]
+          versions = [r["version"] for r in app.get("revisions", [])
+                      if r.get("framework") == sys.argv[1] and r.get("architecture") == sys.argv[2]]
+          print(versions[-1] if versions else "")
+          PY
+          )"
+          if [[ -n "${latest}" ]] && ! dpkg --compare-versions "${BUILD_VERSION}" gt "${latest}"; then
+            echo "::notice::${BUILD_VERSION} is not newer than ${latest} on OpenStore. Raise PROJECT_VERSION in CMakeLists.txt to publish."
+            exit 0
+          fi
           publish_log="$(mktemp)"
           trap 'rm -f "$publish_log"' EXIT
           # OpenStore adds the changelog of every upload to the app's changelog.
@@ -245,8 +278,8 @@ jobs:
           changelog=()
           if [[ "${{ matrix.series }}-${{ matrix.arch }}" == "2404-arm64" ]]; then
             case "${GITHUB_EVENT_NAME}" in
-              schedule) changelog=(-- "Monthly build with the latest yt-dlp release.") ;;
-              *) changelog=(-- "Version ${{ needs.version.outputs.base }} for Ubuntu Touch 20.04 and 24.04, with the latest yt-dlp release.") ;;
+              schedule) changelog=(-- "Monthly update with the latest yt-dlp release.") ;;
+              *) changelog=(-- "Version ${{ needs.version.outputs.base }}, with the latest yt-dlp release.") ;;
             esac
           fi
           for attempt in 1 2 3 4 5; do

@@ -17,7 +17,8 @@
 import json
 import os
 import random
-import sys
+import re
+import shutil
 import time
 from pathlib import Path
 
@@ -25,6 +26,10 @@ try:
     import pyotherside
 except ImportError:
     pyotherside = None
+
+AUDIO_EXTENSIONS = {'m4a', 'mp3', 'opus', 'ogg', 'oga', 'aac', 'flac', 'wav', 'weba'}
+VIDEO_EXTENSIONS = {'mp4', 'mkv', 'webm', 'mov', 'avi', 'flv', '3gp', 'm4v', 'ts'}
+
 
 class StorageManager:
     """
@@ -121,9 +126,8 @@ class StorageManager:
         """
         Delete all download history from entry-based storage.
         
-        Removes all entry directories, clears the index file, and deletes the
-        downloaded files still in the app cache, which nothing can reach
-        without their history entries. This cannot be undone.
+        Removes all entry directories, clears the index file, and deletes
+        unfinished downloads from the cache. Files in the library stay.
         
         Returns:
             True if successful, False on error
@@ -133,12 +137,19 @@ class StorageManager:
                 with open(self.index_file, 'w', encoding='utf-8') as f:
                     json.dump([], f)
             
-            import shutil
             if os.path.exists(self.entries_dir):
                 shutil.rmtree(self.entries_dir)
                 os.makedirs(self.entries_dir, exist_ok=True)
             
-            shutil.rmtree(self.get_download_path(), ignore_errors=True)
+            # Leftovers of interrupted downloads. Finished files that earlier
+            # versions kept here appear in the library and stay.
+            cache = self.get_download_path()
+            for name in os.listdir(cache):
+                if re.search(r'\.(part|ytdl|temp)$|\.part-Frag\d+|\.f\d+\.\w+$', name):
+                    try:
+                        os.remove(os.path.join(cache, name))
+                    except OSError:
+                        pass
             
             return True
         except Exception as e:
@@ -147,7 +158,10 @@ class StorageManager:
     
     def delete_entry(self, entry_id):
         """
-        Delete one history entry and its downloaded file.
+        Delete one history entry.
+        
+        The downloaded file stays in the library. Only a file that an earlier
+        version left in the cache, where nothing else lists it, goes too.
         
         Args:
             entry_id: Entry identifier to delete
@@ -229,6 +243,109 @@ class StorageManager:
         
         os.makedirs(cache_downloads, exist_ok=True)
         return cache_downloads
+    
+    def get_library_path(self):
+        """
+        Get the directory where finished downloads are kept.
+        
+        Unlike the cache, the system never empties this directory. Ubuntu Touch
+        confines apps to their own directories, so this is the one place the app
+        can keep files without asking the user each time.
+        
+        Returns:
+            Path string to the library directory
+        """
+        xdg_data = os.environ.get('XDG_DATA_HOME') or os.path.join(Path.home(), '.local', 'share')
+        library = os.path.join(xdg_data, self.app_name, 'Downloads')
+        os.makedirs(library, exist_ok=True)
+        return library
+    
+    def move_to_library(self, file_path):
+        """
+        Move a finished download, and files that belong to it, into the library.
+        
+        Subtitle files share the name of the video they belong to and move along.
+        A file with the same name already in the library is kept; the new one
+        gets a numbered name instead.
+        
+        Args:
+            file_path: Path of the downloaded file in the cache
+            
+        Returns:
+            Path of the file in the library, or the original path if it could
+            not be moved
+        """
+        if not file_path or not os.path.isfile(file_path):
+            return file_path
+        
+        try:
+            library = self.get_library_path()
+            source_dir = os.path.dirname(file_path)
+            stem, ext = os.path.splitext(os.path.basename(file_path))
+            
+            target_stem = stem
+            number = 1
+            while os.path.exists(os.path.join(library, target_stem + ext)):
+                number += 1
+                target_stem = f"{stem} ({number})"
+            
+            for name in os.listdir(source_dir):
+                if name == stem + ext or (name.startswith(stem + '.') and not name.endswith(('.part', '.ytdl'))):
+                    shutil.move(os.path.join(source_dir, name),
+                                os.path.join(library, target_stem + name[len(stem):]))
+            
+            return os.path.join(library, target_stem + ext)
+        except Exception as e:
+            print(f"[StorageManager] Error moving {file_path} to library: {e}")
+            return file_path
+    
+    def list_library(self):
+        """
+        List the media files in the library, newest first.
+        
+        Files left in the download cache by earlier versions are listed too.
+        
+        Returns:
+            List of dictionaries with path, name, size, mtime, and kind
+        """
+        files = []
+        for directory in (self.get_library_path(), self.get_download_path()):
+            for name in os.listdir(directory):
+                ext = os.path.splitext(name)[1].lower().lstrip('.')
+                kind = 'audio' if ext in AUDIO_EXTENSIONS else 'video' if ext in VIDEO_EXTENSIONS else None
+                path = os.path.join(directory, name)
+                if not kind or not os.path.isfile(path):
+                    continue
+                stat = os.stat(path)
+                files.append({
+                    'path': path,
+                    'name': name,
+                    'size': stat.st_size,
+                    'mtime': int(stat.st_mtime),
+                    'kind': kind,
+                })
+        return sorted(files, key=lambda f: f['mtime'], reverse=True)
+    
+    def delete_library_file(self, file_path):
+        """
+        Delete a file from the library.
+        
+        Args:
+            file_path: Path of the file to delete
+            
+        Returns:
+            True if the file was deleted, False otherwise
+        """
+        allowed = (os.path.realpath(self.get_library_path()), os.path.realpath(self.get_download_path()))
+        if os.path.dirname(os.path.realpath(file_path)) not in allowed:
+            print(f"[StorageManager] Refusing to delete outside the library: {file_path}")
+            return False
+        try:
+            os.remove(file_path)
+            return True
+        except OSError as e:
+            print(f"[StorageManager] Error deleting {file_path}: {e}")
+            return False
     
     def get_thumbnails_path(self):
         """
@@ -664,7 +781,7 @@ def save_single_entry(entry_data):
 
 def delete_entry(entry_id):
     """
-    Delete one history entry and its downloaded file.
+    Delete one history entry.
     
     QML-accessible wrapper for StorageManager.delete_entry().
     
@@ -675,6 +792,20 @@ def delete_entry(entry_id):
         True if successful, False on error
     """
     return get_storage_manager().delete_entry(entry_id)
+
+
+def list_library():
+    """
+    QML-accessible wrapper for StorageManager.list_library().
+    """
+    return get_storage_manager().list_library()
+
+
+def delete_library_file(file_path):
+    """
+    QML-accessible wrapper for StorageManager.delete_library_file().
+    """
+    return get_storage_manager().delete_library_file(file_path)
 
 
 def clear_download_history():

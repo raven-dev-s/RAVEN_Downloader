@@ -44,22 +44,42 @@ Item {
         submitted(url, playlistMode);
     }
 
-    height: urlField.height + controls.height
+    height: fieldFrame.height + units.gu(1) + controls.height
+
+    function focusField() {
+        urlField.forceActiveFocus();
+    }
+
+    // A filled, outlined box that reads as an input field at a glance, and
+    // spans the header with the same margins as the rest of the page.
+    Rectangle {
+        id: fieldFrame
+        anchors {
+            top: parent.top
+            topMargin: units.gu(1)
+            left: parent.left
+            leftMargin: units.gu(2)
+            right: parent.right
+            rightMargin: units.gu(2)
+        }
+        height: units.gu(5.5)
+        radius: units.gu(1)
+        color: urlField.activeFocus ? theme.palette.normal.field
+                                    : Qt.rgba(theme.palette.normal.base.r, theme.palette.normal.base.g,
+                                              theme.palette.normal.base.b, 0.35)
+        border.width: urlField.activeFocus ? units.dp(2) : units.dp(1)
+        border.color: urlField.activeFocus ? theme.palette.normal.focus : theme.palette.normal.base
+    }
 
     TextField {
         id: urlField
         objectName: "urlField"
-        anchors {
-            top: parent.top
-            left: parent.left
-            right: parent.right
-        }
-        height: units.gu(6)
+        anchors.fill: fieldFrame
         placeholderText: urlBar.playlistMode ? i18n.tr("Paste a playlist link") : i18n.tr("Paste a video link")
         inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoPredictiveText | Qt.ImhNoAutoUppercase
         onAccepted: urlBar.submit()
 
-        // Replaces the rounded field frame: the header itself is the field.
+        // fieldFrame draws the box, so the field's own frame is left out.
         style: Component {
             Item {
                 anchors.fill: parent
@@ -67,7 +87,7 @@ Item {
                 property color color: theme.palette.normal.backgroundText
                 property color selectedTextColor: theme.palette.selected.selectionText
                 property color selectionColor: theme.palette.selected.selection
-                property real frameSpacing: units.gu(2)
+                property real frameSpacing: units.gu(1.5)
             }
         }
 
@@ -102,24 +122,14 @@ Item {
         }
     }
 
-    Rectangle {
-        anchors {
-            top: urlField.bottom
-            left: parent.left
-            right: parent.right
-        }
-        height: urlField.activeFocus ? units.dp(2) : units.dp(1)
-        color: urlField.activeFocus ? theme.palette.normal.focus : theme.palette.normal.base
-    }
-
     Item {
         id: controls
         anchors {
-            top: urlField.bottom
+            top: fieldFrame.bottom
             left: parent.left
             right: parent.right
         }
-        height: units.gu(6)
+        height: units.gu(6.5)
 
         Sections {
             id: modeSections

@@ -87,13 +87,13 @@ MainView {
         property bool embeddedSubtitle: false
         property bool autoDownload: false
         property bool audioOnlyDefault: false
+        property bool askWhereToSave: false
     }
 
     Component {
         id: contentSharePage
         ContentHubDialog {
-            downloadedFilePath: ""
-            pageStack: root.pageStack
+            onCloseRequested: pageStack.pop()
         }
     }
 
@@ -111,6 +111,15 @@ MainView {
         id: aboutPage
         AboutPage {
             pythonInstance: python
+        }
+    }
+
+    function openLibrary() {
+        while (pageStack.depth > 1) {
+            pageStack.pop();
+        }
+        if (pageStack.currentPage && pageStack.currentPage.openLibrary) {
+            pageStack.currentPage.openLibrary();
         }
     }
 
@@ -183,6 +192,19 @@ MainView {
 
             property bool historyLoading: true
 
+            // The app is for pasting links, so the field is ready for input
+            // whenever this page shows: at start and on coming back to it.
+            // Asking earlier is undone when the header takes in the bar.
+            onActiveChanged: {
+                if (active) {
+                    urlBar.focusField();
+                }
+            }
+
+            function openLibrary() {
+                libraryEdge.commit();
+            }
+
             header: PageHeader {
                 title: i18n.tr("RAVEN Downloader")
 
@@ -240,8 +262,9 @@ MainView {
                     bottom: parent.bottom
                 }
                 clip: true
-                // Fills the view at least, so that the empty state centers in it.
-                contentHeight: Math.max(listColumn.height, height)
+                // Leaves room for the bottom edge hint under the last item, and
+                // fills the view so that the empty state centers in it.
+                contentHeight: Math.max(listColumn.height + units.gu(6), height)
 
                 PullToRefresh {
                     parent: mainScroll
@@ -346,6 +369,47 @@ MainView {
             Scrollbar {
                 flickableItem: mainScroll
                 align: Qt.AlignTrailing
+            }
+
+            // Ubuntu Touch's bottom edge: swipe up for the downloaded files.
+            BottomEdge {
+                id: libraryEdge
+                objectName: "libraryEdge"
+                height: mainPage.height
+                hint.text: i18n.tr("Library")
+                hint.iconName: "save"
+                preloadContent: true
+                contentComponent: Component {
+                    LibraryPage {
+                        width: libraryEdge.width
+                        height: libraryEdge.height
+                        pythonInstance: python
+                        onCloseRequested: libraryEdge.collapse()
+                        onSaveRequested: {
+                            libraryEdge.collapse();
+                            root.openContentHubExport(path);
+                        }
+                    }
+                }
+                onCommitStarted: {
+                    if (contentItem) {
+                        contentItem.refresh();
+                    }
+                }
+
+                Connections {
+                    target: downloadManager
+                    onLibraryChanged: {
+                        if (libraryEdge.contentItem) {
+                            libraryEdge.contentItem.refresh();
+                        }
+                    }
+                    onFileRemoved: {
+                        if (libraryEdge.contentItem) {
+                            libraryEdge.contentItem.refresh();
+                        }
+                    }
+                }
             }
         }
     }
