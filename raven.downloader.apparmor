@@ -4,7 +4,8 @@
         "audio",
         "video",
         "content_exchange",
-        "content_exchange_source"
+        "content_exchange_source",
+        "usermetrics"
     ],
     "policy_version": "@APPARMOR_POLICY@"
 }

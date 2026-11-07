@@ -49,6 +49,19 @@ MainView {
         id: mainDialogs
     }
 
+    // The lock screen's daily download count. Loaded separately so that the
+    // app still starts on a system without the UserMetrics module.
+    Loader {
+        id: downloadMetric
+        source: Qt.resolvedUrl("Components/DownloadMetric.qml")
+    }
+
+    function recordDownload() {
+        if (downloadMetric.item) {
+            downloadMetric.item.recordDownload();
+        }
+    }
+
     DownloadItemManager {
         id: downloadManager
         pythonInstance: python

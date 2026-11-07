@@ -372,6 +372,7 @@ ListItem {
                 onDownloadFinished: {
                     mediaItem.saveEntryMetadata();
                     downloadManager.libraryChanged();
+                    root.recordDownload();
                     if (generalSettings.askWhereToSave && !downloadButton.quiet) {
                         root.openContentHubExport(filePath);
                     }

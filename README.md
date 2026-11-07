@@ -84,6 +84,9 @@ clickable desktop --no-nvidia
 - Follow the system theme, or choose Light or Dark
 - Clear download history (asks for confirmation)
 
+**Lock Screen**
+- The info circle on the lock screen shows how many videos you downloaded today
+
 **History Management**
 - Pull down on the download list to refresh from storage
 - Swipe a list item to remove it from the list; its file stays in the Library
@@ -92,6 +95,10 @@ clickable desktop --no-nvidia
 ---
 
 ## Recent Updates
+
+### Version 4.3.8 — November 2026
+
+- **Lock screen count** — The lock screen's info circle shows how many videos you downloaded today, such as "5 videos downloaded today"
 
 ### Version 4.3.2 — November 2026
 
