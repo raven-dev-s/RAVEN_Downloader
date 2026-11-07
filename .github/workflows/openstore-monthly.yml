@@ -273,23 +273,26 @@ jobs:
           fi
           publish_log="$(mktemp)"
           trap 'rm -f "$publish_log"' EXIT
-          # Release notes. OpenStore adds the changelog of every upload to the
-          # app's changelog, so only the first upload of a release adds them:
-          # later ones see them already at the top and send none.
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            notes="$(printf '%s\n- %s' "${{ needs.version.outputs.base }}${{ needs.version.outputs.stamp }}" \
-              "Monthly update with the latest yt-dlp release, for the newest site changes.")"
-          else
-            notes="$(python3 - "${{ needs.version.outputs.base }}" <<'PY'
-          import re, sys
-          version = sys.argv[1]
-          text = open("CHANGELOG.md", encoding="utf-8").read()
-          match = re.search(r"^## " + re.escape(version) + r"\s*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
-          body = match.group(1).strip() if match else "- Updated with the latest yt-dlp release."
-          print(version + "\n" + body)
+          # Release notes, as one line of plain text: OpenStore replaces the
+          # app's changelog with each upload's note, and a multi-line note with
+          # typographic characters left it empty. Pushes take their section of
+          # CHANGELOG.md; monthly builds note the yt-dlp update.
+          notes="$(python3 - "${{ needs.version.outputs.base }}" "${{ needs.version.outputs.stamp }}" <<'PY'
+          import re, sys, unicodedata
+          version, stamp = sys.argv[1], sys.argv[2]
+          if stamp:
+              text = "Monthly update with the latest yt-dlp release, for the newest site changes."
+          else:
+              changelog = open("CHANGELOG.md", encoding="utf-8").read()
+              match = re.search(r"^## " + re.escape(version) + r"\s*\n(.*?)(?=^## |\Z)", changelog, re.S | re.M)
+              items = [line.strip()[2:].strip() for line in (match.group(1) if match else "").splitlines()
+                       if line.strip().startswith("- ")]
+              text = "; ".join(items) if items else "Updated with the latest yt-dlp release."
+          text = text.replace("\u2026", "...").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
+          text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+          print(f"{version}{stamp}: {text}")
           PY
           )"
-          fi
           published="$(python3 - <<'PY' || true
           import json, urllib.request
           app = json.load(urllib.request.urlopen(
@@ -297,8 +300,10 @@ jobs:
           print((app.get("changelog") or "").strip().splitlines()[0] if app.get("changelog") else "")
           PY
           )"
+          # Each upload sends the note until the store shows it, in case
+          # OpenStore keeps the changelog of earlier uploads after all.
           changelog=()
-          if [[ "${published}" != "$(printf '%s' "${notes}" | head -n 1)" ]]; then
+          if [[ "${published}" != "${notes}" ]]; then
             changelog=(-- "${notes}")
           fi
           echo "Release notes for this upload:"
