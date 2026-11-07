@@ -60,8 +60,9 @@ ListItem {
     leadingActions: ListItemActions {
         actions: [
             Action {
+                // Only the entry goes; its file stays in the Library.
                 iconName: "delete"
-                text: i18n.tr("Delete")
+                text: i18n.tr("Remove")
                 enabled: !downloadButton.active
                 onTriggered: downloadManager.removeEntry(mediaItem.entryId)
             }

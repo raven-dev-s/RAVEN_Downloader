@@ -721,7 +721,8 @@ def load_list_model_data():
         thumbnail = item.get('vThumbnail', '')
         if thumbnail and not thumbnail.startswith('qrc://'):
             if not os.path.exists(thumbnail):
-                item['vThumbnail'] = 'file:///assets/placeholder-video.png'
+                # The list shows a neutral tile for entries without a thumbnail.
+                item['vThumbnail'] = ''
         
         if 'vDuration' not in item:
             item['vDuration'] = item.get('duration', '')

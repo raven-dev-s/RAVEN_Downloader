@@ -13,21 +13,24 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
 import QtQuick 2.7
-import QtQuick.Layouts 1.3
 import QtGraphicalEffects 1.0
 import Lomiri.Components 1.3
 
+/**
+ * A video thumbnail with rounded corners. Without a thumbnail it shows a
+ * neutral, theme-colored tile instead of a fixed light image, which stood
+ * out as a bright box in the dark theme.
+ */
 Image {
     id: thumbnailImage
-    
+
     property string thumbnailUrl: ""
-    property string placeholderPath: Qt.resolvedUrl("../../assets/placeholder-video.png")
     property real cornerRadius: units.gu(1)
-    
+
     fillMode: Image.PreserveAspectCrop
-    
+    source: sourceFor(thumbnailUrl)
+
     layer.enabled: true
     layer.effect: OpacityMask {
         maskSource: Item {
@@ -41,39 +44,33 @@ Image {
             }
         }
     }
-    
-    Component.onCompleted: {
-        source = placeholderPath;
-        if (thumbnailUrl && thumbnailUrl !== "") {
-            loadThumbnail(thumbnailUrl);
+
+    function sourceFor(url) {
+        if (!url) {
+            return "";
         }
-    }
-    
-    onThumbnailUrlChanged: {
-        if (thumbnailUrl && thumbnailUrl !== "") {
-            loadThumbnail(thumbnailUrl);
-        } else {
-            source = placeholderPath;
-        }
-    }
-    
-    onStatusChanged: {
-        if (status === Image.Error) {
-            console.log("[ThumbnailImage] Error loading:", thumbnailUrl, "using placeholder");
-            source = placeholderPath;
-        }
-    }
-    
-    function loadThumbnail(url) {
         if (url.startsWith("/")) {
-            source = "file://" + url;
-        } else if (url.startsWith("file://") ||
-                   url.startsWith("http://") || 
-                   url.startsWith("https://")) {
-            source = url;
-        } else {
-            console.error("[ThumbnailImage] Invalid URL format:", url, "using placeholder");
-            source = placeholderPath;
+            return "file://" + url;
+        }
+        if (url.startsWith("file://") || url.startsWith("http://") || url.startsWith("https://")) {
+            return url;
+        }
+        console.error("[ThumbnailImage] Invalid URL format:", url);
+        return "";
+    }
+
+    // Shown until a thumbnail has loaded, and whenever there is none.
+    Rectangle {
+        anchors.fill: parent
+        visible: thumbnailImage.status !== Image.Ready
+        color: theme.palette.normal.base
+
+        Icon {
+            anchors.centerIn: parent
+            width: Math.min(parent.width, parent.height) * 0.4
+            height: width
+            name: "stock_video"
+            color: theme.palette.normal.backgroundSecondaryText
         }
     }
 }

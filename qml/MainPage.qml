@@ -379,10 +379,19 @@ MainView {
                 hint.text: i18n.tr("Library")
                 hint.iconName: "save"
                 preloadContent: true
-                contentComponent: Component {
+                contentComponent: libraryComponent
+
+                Component {
+                    id: libraryComponent
                     LibraryPage {
                         width: libraryEdge.width
                         height: libraryEdge.height
+                        // The bottom edge hands its content an outdated theme
+                        // after a theme change, so the Library follows the
+                        // app's setting directly. An empty name follows the system.
+                        theme: ThemeSettings {
+                            name: generalSettings.themeName
+                        }
                         pythonInstance: python
                         onCloseRequested: libraryEdge.collapse()
                         onSaveRequested: {
@@ -390,6 +399,27 @@ MainView {
                             root.openContentHubExport(path);
                         }
                     }
+                }
+
+                // A theme change rebuilds the bottom edge's style, including the
+                // panel that holds the Library. The bottom edge does not move its
+                // content to the new panel, so the Library would stay behind,
+                // blank or in the old colors. Recreate it once the style is rebuilt.
+                function reloadContent() {
+                    contentComponent = null;
+                    contentComponent = libraryComponent;
+                }
+
+                Timer {
+                    id: reloadTimer
+                    interval: 100
+                    onTriggered: libraryEdge.reloadContent()
+                }
+
+                Connections {
+                    target: root.theme
+                    onNameChanged: reloadTimer.restart()
+                    onPaletteChanged: reloadTimer.restart()
                 }
                 onCommitStarted: {
                     if (contentItem) {

@@ -93,6 +93,13 @@ clickable desktop --no-nvidia
 
 ## Recent Updates
 
+### Version 4.3.2 — November 2026
+
+- **Library follows the theme** — Readable in light and dark, also right after switching
+- **"Save as…" layout** — The list of apps starts below the title bar
+- **Safer Library** — Deleting a file asks first
+- **Release notes** — OpenStore shows what changed in each version, from `CHANGELOG.md`
+
 ### Version 4.3.1 — November 2026
 
 - **Library** — Downloads are kept automatically and listed at the bottom edge; "Save as…" sends a file anywhere else, and Settings can ask after each download
@@ -271,6 +278,10 @@ Monthly builds add the build date (`YYMMDD`). OpenStore compares versions the
 way Debian does, so `4.3.1` < `4.3.1-261201` < `4.3.2`, and it rejects one
 version number for two frameworks, hence `~focal` on 20.04 packages. Raise
 `PROJECT_VERSION` for every release with code changes.
+
+Release notes on OpenStore come from `CHANGELOG.md`: add a `## <version>`
+section for the new `PROJECT_VERSION` before pushing. Monthly builds publish a
+short note about the yt-dlp update instead.
 
 Before enabling the workflow, add the OpenStore API key as the
 `OPENSTORE_API_KEY` GitHub Actions secret (repository-level or in the

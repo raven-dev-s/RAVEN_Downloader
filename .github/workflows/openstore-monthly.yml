@@ -273,15 +273,37 @@ jobs:
           fi
           publish_log="$(mktemp)"
           trap 'rm -f "$publish_log"' EXIT
-          # OpenStore adds the changelog of every upload to the app's changelog.
-          # Write the note for one package of the release, not all six.
-          changelog=()
-          if [[ "${{ matrix.series }}-${{ matrix.arch }}" == "2404-arm64" ]]; then
-            case "${GITHUB_EVENT_NAME}" in
-              schedule) changelog=(-- "Monthly update with the latest yt-dlp release.") ;;
-              *) changelog=(-- "Version ${{ needs.version.outputs.base }}, with the latest yt-dlp release.") ;;
-            esac
+          # Release notes. OpenStore adds the changelog of every upload to the
+          # app's changelog, so only the first upload of a release adds them:
+          # later ones see them already at the top and send none.
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            notes="$(printf '%s\n- %s' "${{ needs.version.outputs.base }}${{ needs.version.outputs.stamp }}" \
+              "Monthly update with the latest yt-dlp release, for the newest site changes.")"
+          else
+            notes="$(python3 - "${{ needs.version.outputs.base }}" <<'PY'
+          import re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          match = re.search(r"^## " + re.escape(version) + r"\s*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+          body = match.group(1).strip() if match else "- Updated with the latest yt-dlp release."
+          print(version + "\n" + body)
+          PY
+          )"
           fi
+          published="$(python3 - <<'PY' || true
+          import json, urllib.request
+          app = json.load(urllib.request.urlopen(
+              "https://open-store.io/api/v4/apps/raven.downloader.shohag", timeout=60))["data"]
+          print((app.get("changelog") or "").strip().splitlines()[0] if app.get("changelog") else "")
+          PY
+          )"
+          changelog=()
+          if [[ "${published}" != "$(printf '%s' "${notes}" | head -n 1)" ]]; then
+            changelog=(-- "${notes}")
+          fi
+          echo "Release notes for this upload:"
+          printf '%s\n' "${changelog[@]:1}"
+
           for attempt in 1 2 3 4 5; do
             if clickable publish --arch "${{ matrix.arch }}" --timeout 600 "${changelog[@]}" 2>&1 | tee "$publish_log"; then
               break

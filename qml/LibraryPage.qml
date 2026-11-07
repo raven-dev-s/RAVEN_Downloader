@@ -15,6 +15,7 @@
  */
 import QtQuick 2.7
 import Lomiri.Components 1.3
+import Lomiri.Components.Popups 1.3
 
 import "Components"
 import "js/utils.js" as Utils
@@ -67,7 +68,10 @@ Page {
         id: filesModel
     }
 
-    ListView {
+    // A plain column of rows, like the main list. Rows a ListView creates get
+    // the system theme instead of the app's, which left text unreadable when
+    // the two differ.
+    Flickable {
         id: filesView
         anchors {
             top: libraryPage.header.bottom
@@ -76,56 +80,62 @@ Page {
             bottom: parent.bottom
         }
         clip: true
-        model: filesModel
+        contentHeight: filesColumn.height
 
-        delegate: ListItem {
+        Column {
+            id: filesColumn
             width: filesView.width
-            height: fileLayout.height + divider.height
-            onClicked: libraryPage.saveRequested(model.path)
 
-            leadingActions: ListItemActions {
-                actions: [
-                    Action {
-                        iconName: "delete"
-                        text: i18n.tr("Delete")
-                        onTriggered: {
-                            var path = model.path;
-                            downloadManager.deleteLibraryFile(path, function(deleted) {
-                                if (deleted) {
-                                    libraryPage.refresh();
-                                }
-                            });
+            Repeater {
+                model: filesModel
+
+                delegate: ListItem {
+                    width: filesColumn.width
+                    height: fileLayout.height + divider.height
+                    onClicked: libraryPage.saveRequested(model.path)
+
+                    leadingActions: ListItemActions {
+                        actions: [
+                            Action {
+                                iconName: "delete"
+                                text: i18n.tr("Delete")
+                                // Deleting erases the file itself, so ask first.
+                                onTriggered: PopupUtils.open(deleteConfirmation, libraryPage, {
+                                    path: model.path,
+                                    fileName: model.name
+                                })
+                            }
+                        ]
+                    }
+
+                    trailingActions: ListItemActions {
+                        actions: [
+                            Action {
+                                iconName: "share"
+                                text: i18n.tr("Save as…")
+                                onTriggered: libraryPage.saveRequested(model.path)
+                            }
+                        ]
+                    }
+
+                    ListItemLayout {
+                        id: fileLayout
+                        title.text: model.name
+                        title.elide: Text.ElideMiddle
+                        subtitle.text: Utils.formatBytes(model.size) + " · "
+                                       + Qt.formatDate(new Date(model.mtime * 1000), Qt.DefaultLocaleShortDate)
+
+                        Icon {
+                            SlotsLayout.position: SlotsLayout.Leading
+                            width: units.gu(3)
+                            height: width
+                            name: model.kind === "audio" ? "stock_music" : "stock_video"
+                            color: theme.palette.normal.backgroundSecondaryText
                         }
+
+                        ProgressionSlot {}
                     }
-                ]
-            }
-
-            trailingActions: ListItemActions {
-                actions: [
-                    Action {
-                        iconName: "share"
-                        text: i18n.tr("Save as…")
-                        onTriggered: libraryPage.saveRequested(model.path)
-                    }
-                ]
-            }
-
-            ListItemLayout {
-                id: fileLayout
-                title.text: model.name
-                title.elide: Text.ElideMiddle
-                subtitle.text: Utils.formatBytes(model.size) + " · "
-                               + Qt.formatDate(new Date(model.mtime * 1000), Qt.DefaultLocaleShortDate)
-
-                Icon {
-                    SlotsLayout.position: SlotsLayout.Leading
-                    width: units.gu(3)
-                    height: width
-                    name: model.kind === "audio" ? "stock_music" : "stock_video"
-                    color: theme.palette.normal.backgroundSecondaryText
                 }
-
-                ProgressionSlot {}
             }
         }
     }
@@ -133,6 +143,38 @@ Page {
     Scrollbar {
         flickableItem: filesView
         align: Qt.AlignTrailing
+    }
+
+    Component {
+        id: deleteConfirmation
+
+        Dialog {
+            id: deleteDialog
+            property string path: ""
+            property string fileName: ""
+
+            title: i18n.tr("Delete this file?")
+            text: i18n.tr("\"%1\" will be deleted from your phone. This cannot be undone.").arg(fileName)
+
+            Button {
+                text: i18n.tr("Delete")
+                color: theme.palette.normal.negative
+                onClicked: {
+                    var path = deleteDialog.path;
+                    PopupUtils.close(deleteDialog);
+                    downloadManager.deleteLibraryFile(path, function(deleted) {
+                        if (deleted) {
+                            libraryPage.refresh();
+                        }
+                    });
+                }
+            }
+
+            Button {
+                text: i18n.tr("Cancel")
+                onClicked: PopupUtils.close(deleteDialog)
+            }
+        }
     }
 
     EmptyState {

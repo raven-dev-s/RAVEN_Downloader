@@ -55,35 +55,41 @@ Page {
         ]
     }
 
-    ContentPeerPicker {
-        id: peerPicker
+    // ContentPeerPicker fills its parent whatever anchors it is given, so this
+    // item keeps it below the header instead of underneath it.
+    Item {
+        id: pickerArea
         anchors {
             top: shareHeader.bottom
             left: parent.left
             right: parent.right
             bottom: parent.bottom
         }
-        showTitle: false
-        // Offer the apps that take this kind of file.
-        contentType: sharePage.isAudio ? ContentType.Music
-                                       : sharePage.isVideo ? ContentType.Videos : ContentType.All
-        handler: ContentHandler.Destination
 
-        onPeerSelected: {
-            sharePage.activeTransfer = peer.request();
-            if (sharePage.activeTransfer) {
-                sharePage.activeTransfer.items = [
-                    Utils.createContentItem(contentItemComponent, sharePage.downloadedFilePath)
-                ];
-                // Charged hands the file over. The receiving app takes it from
-                // here, so this page is done.
-                sharePage.activeTransfer.state = ContentTransfer.Charged;
-                console.log("[ContentHub] File handed over:", sharePage.downloadedFilePath);
+        ContentPeerPicker {
+            id: peerPicker
+            showTitle: false
+            // Offer the apps that take this kind of file.
+            contentType: sharePage.isAudio ? ContentType.Music
+                                           : sharePage.isVideo ? ContentType.Videos : ContentType.All
+            handler: ContentHandler.Destination
+
+            onPeerSelected: {
+                sharePage.activeTransfer = peer.request();
+                if (sharePage.activeTransfer) {
+                    sharePage.activeTransfer.items = [
+                        Utils.createContentItem(contentItemComponent, sharePage.downloadedFilePath)
+                    ];
+                    // Charged hands the file over. The receiving app takes it from
+                    // here, so this page is done.
+                    sharePage.activeTransfer.state = ContentTransfer.Charged;
+                    console.log("[ContentHub] File handed over:", sharePage.downloadedFilePath);
+                }
+                sharePage.closeRequested();
             }
-            sharePage.closeRequested();
-        }
 
-        onCancelPressed: sharePage.cancel()
+            onCancelPressed: sharePage.cancel()
+        }
     }
 
     ContentTransferHint {
