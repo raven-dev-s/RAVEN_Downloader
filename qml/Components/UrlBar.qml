@@ -50,6 +50,40 @@ Item {
         urlField.forceActiveFocus();
     }
 
+    function clipboardText() {
+        var text = Clipboard.data.text;
+        return text ? text.trim() : "";
+    }
+
+    // The phone may hand over a link copied in another app a moment after
+    // the app comes back, so a clipboard update that arrives shortly after
+    // tapping Paste is taken as well.
+    function pasteFromClipboard() {
+        var text = clipboardText();
+        if (text.length > 0) {
+            urlField.text = text;
+        }
+        pasteWatch.restart();
+    }
+
+    Timer {
+        id: pasteWatch
+        interval: 3000
+    }
+
+    Connections {
+        target: Clipboard
+        onDataChanged: {
+            if (pasteWatch.running) {
+                var text = urlBar.clipboardText();
+                if (text.length > 0) {
+                    urlField.text = text;
+                    pasteWatch.stop();
+                }
+            }
+        }
+    }
+
     // A filled, outlined box that reads as an input field at a glance, and
     // spans the header with the same margins as the rest of the page.
     Rectangle {
@@ -99,15 +133,22 @@ Item {
                                         : theme.palette.normal.backgroundSecondaryText
         }
 
+        // Paste while the field is empty; once it has a link, a cross clears
+        // it. The link stays until it is cleared, also after Fetch.
         secondaryItem: AbstractButton {
-            width: visible ? units.gu(4) : 0
+            objectName: "pasteClearButton"
+            width: units.gu(4)
             height: units.gu(4)
-            visible: urlField.text.length === 0
             action: Action {
-                iconName: "edit-paste"
-                text: i18n.tr("Paste")
+                iconName: urlField.text.length === 0 ? "edit-paste" : "edit-clear"
+                text: urlField.text.length === 0 ? i18n.tr("Paste") : i18n.tr("Clear")
                 onTriggered: {
-                    urlField.text = Clipboard.data.text ? Clipboard.data.text.trim() : "";
+                    if (urlField.text.length === 0) {
+                        urlBar.pasteFromClipboard();
+                    } else {
+                        urlField.text = "";
+                        pasteWatch.stop();
+                    }
                     urlField.forceActiveFocus();
                 }
             }

@@ -248,7 +248,6 @@ MainView {
 
             Connections {
                 target: root
-                onFetchSucceeded: urlBar.text = ""
                 onPlaylistModeRequested: urlBar.setPlaylistMode(true)
             }
 

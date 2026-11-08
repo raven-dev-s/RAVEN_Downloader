@@ -4,6 +4,11 @@ Each release publishes the notes under its version heading to OpenStore. Add
 a section for the version in `CMakeLists.txt` before pushing a release. Keep
 the notes short and written for people using the app.
 
+## 4.3.9
+
+- The link stays in the field after Fetch, until you clear it with the cross
+- Paste picks up a link you copied in another app while RAVEN was open
+
 ## 4.3.8
 
 - The lock screen shows how many videos you downloaded today

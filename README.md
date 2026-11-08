@@ -96,6 +96,11 @@ clickable desktop --no-nvidia
 
 ## Recent Updates
 
+### Version 4.3.9 — November 2026
+
+- **Link stays in the field** — Fetch no longer empties the link field; clear it with the cross when you're done
+- **Paste after switching apps** — Paste picks up a link copied in another app while RAVEN was open
+
 ### Version 4.3.8 — November 2026
 
 - **Lock screen count** — The lock screen's info circle shows how many videos you downloaded today, such as "5 videos downloaded today"
